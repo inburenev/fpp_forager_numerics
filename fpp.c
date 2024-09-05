@@ -475,10 +475,10 @@ int save_results(const Simulation_parameters *simulation_parameters,
     fprintf(fptr,"# n_steps: %lld \n ",     simulation_parameters->n_steps);
     fprintf(fptr,"# acc: %lld \n ",         result_data->acc);
     fprintf(fptr,"# overshoot: %lld \n ",   result_data->overshoot);
-    fprintf(fptr,"# beta_is: %f ,\n ",      simulation_parameters->beta_is);
+    fprintf(fptr,"# beta_is: %f \n ",       simulation_parameters->beta_is);
     fprintf(fptr,"# observable: %c \n ",    simulation_parameters->observable);
     fprintf(fptr,"# mean: %f \n ",          result_data->mean);
-    fprintf(fptr,"# mean: %f \n ",          result_data->variance);
+    fprintf(fptr,"# variance: %f \n ",      result_data->variance);
 
     /* histograms */
     for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
