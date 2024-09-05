@@ -61,7 +61,7 @@ typedef struct simulation_parameters {
     double M_parameters[10];    /* array of parameters */
 
     /* properties of the Metropolis algorithm */
-    int trajectory_length;            /* maximum length of the trajectory */
+    int trajectory_length;      /* maximum length of the trajectory */
     char quantity_of_interest;  /* quantity of interest, 'T' or 'n'
                                    T -- lifetime of the particle
                                    n -- number of jumps before death */
@@ -70,16 +70,15 @@ typedef struct simulation_parameters {
     int n_changes;              /* number of jumps to change per step */
     char filename[100];         /* name of the file where the last
                                     trajectory is stored */
+
+    /* parameters of the output */
+    double x_min, x_max;        /* endpoints of the histogram */
+    int n_bins;                 /* number of bins in the histogram */
+    double delta;               /* width of the bin */
 } Simulation_parameters;
 
 
 typedef struct result_data {
-    /* the structure containing the results */
-
-    /* histogram parameters */
-    double x_min, x_max;        /* endpoints of the histogram */
-    int n_bins;                 /* number of bins in the histogram */
-
     /* results */
     double mean, variance;      /* the mean and the variance of the data */
     int *hist_counts;           /* number of samples in the bin */
@@ -93,11 +92,16 @@ typedef struct result_data {
     char filename_data[100];    /* name of the file to store the histogram */
 } Result_data;
 
+typedef struct trajectory {
+    double *tau, *M;            /* time intervals and replenishments */
+    double n_fp, T_fp;          /* first passage properties */
+} Trajectory;
+
+
 /*** parse command line arguments  ***/
 // TODO: rewrite this function in a nicer way (using getopt)
 int parse_arguments(int argc, char *argv[],
-                    Simulation_parameters *simulation_parameters,
-                    Result_data *result_data)
+                    Simulation_parameters *simulation_parameters)
 {
     /*
      * this function parses arguments into the parameters of the simulation
@@ -243,9 +247,9 @@ int parse_arguments(int argc, char *argv[],
         if (strcmp(argv[argument_index], "hist") == 0) {
             if (argument_index + 2 < argc) {
                 argument_index++;
-                result_data->x_min = atof(argv[argument_index]);
+                simulation_parameters->x_min = atof(argv[argument_index]);
                 argument_index++;
-                result_data->x_max = atof(argv[argument_index]);
+                simulation_parameters->x_max = atof(argv[argument_index]);
             }
         }
     } else {
@@ -259,7 +263,7 @@ int parse_arguments(int argc, char *argv[],
         if (strcmp(argv[argument_index], "n_bins") == 0) {
             if (argument_index + 1 < argc) {
                 argument_index++;
-                result_data->n_bins = atoi(argv[argument_index]);
+                simulation_parameters->n_bins = atoi(argv[argument_index]);
             }
         }
     } else {
@@ -282,29 +286,29 @@ double generate_exponential(double lambda)
 
 /*** generate a replenishment                                               ***/
 /*** the probability distribution is specified in simulation parameters     ***/
-double generate_M(const Simulation_parameters simulation_parameters)
+double generate_M(const Simulation_parameters *simulation_parameters)
 {
     /* fixed replenishment */
-    if (strcmp(simulation_parameters.M_process, "fixed_M") == 0) {
+    if (strcmp(simulation_parameters->M_process, "fixed_M") == 0) {
         /* fixed replenishment */
-        return  simulation_parameters.M_parameters[0];
+        return  simulation_parameters->M_parameters[0];
     }
     /* exponential replenishment */
-    if (strcmp(simulation_parameters.M_process, "exp_M") == 0) {
-        return  generate_exponential(simulation_parameters.M_parameters[0]);
+    if (strcmp(simulation_parameters->M_process, "exp_M") == 0) {
+        return  generate_exponential(simulation_parameters->M_parameters[0]);
     }
     return 0;
 }
 
 /*** generate a single time interval                                        ***/
 /*** the probability distribution is specified in simulation parameters     ***/
-double generate_tau(const Simulation_parameters simulation_parameters)
+double generate_tau(const Simulation_parameters *simulation_parameters)
 {
     /* generate a single time interval */
     /* the probability distribution is defined in process_parameters */
-    if (strcmp(simulation_parameters.tau_process, "exp_tau") == 0) {
+    if (strcmp(simulation_parameters->tau_process, "exp_tau") == 0) {
         /* exponential time intervals */
-        return generate_exponential(simulation_parameters.tau_parameters[0]);
+        return generate_exponential(simulation_parameters->tau_parameters[0]);
     }
     return 0;
 }
@@ -337,7 +341,6 @@ int compute_fp(int *n_fp, double *T_fp,
         }
     }
 
-    /* If the first passage has not happened, return -1 */
     *n_fp += 1;
     return -1;
 }
@@ -358,122 +361,140 @@ double ln_w(const int n_fp, const double T_fp,
     }
 }
 
+/*** initialize the simulation by loading the command line parameters       ***/
+int initialize_simulation(const int argc, char *argv[],
+                          Simulation_parameters *simulation_parameters) {
 
-int main(int argc, char *argv[]) {
-
-    /*************************************************************************/
-    /************************ Initialization Routine *************************/
-    /*************************************************************************/
-
-    /* Declare all variables with parameters */
-    Simulation_parameters simulation_parameters;
-    Result_data result_data;
-
-    /* Parse the command line arguments */
     if (parse_arguments(argc, argv,
-                        &simulation_parameters,
-                        &result_data) == -1) {
+                        simulation_parameters) == -1) {
         fprintf(stderr, "Error while passing arguments\n");
         return -1;
     }
 
+    simulation_parameters->delta =
+            (simulation_parameters->x_max - simulation_parameters->x_min)
+                    / (double) simulation_parameters->n_bins;;
+
+    /* if the quantity of interest is discrete, bin width should be integer */
+    if ( simulation_parameters->quantity_of_interest == 'n') {
+        simulation_parameters->delta = ceil(simulation_parameters->delta);
+    }
+
 
     /* create a directories for the output */
-    mkdir("metropolis_data", S_IRWXU | S_IRWXG | S_IRWXO);
     mkdir("metropolis_conf", S_IRWXU | S_IRWXG | S_IRWXO);
-
-    /* Create filenames based on the input parameters */
-    sprintf(simulation_parameters.filename, /* file with trajectory */
+    sprintf(simulation_parameters->filename, /* file with trajectory */
             "metropolis_conf/"
             "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-conf",
-            simulation_parameters.tau_process,
-            simulation_parameters.tau_parameters[0],
-            simulation_parameters.M_process,
-            simulation_parameters.M_parameters[0],
-            simulation_parameters.E0,
-            simulation_parameters.trajectory_length,
-            simulation_parameters.beta_is,
-            simulation_parameters.quantity_of_interest);
-    /* the file where result will be stored */
-    sprintf(result_data.filename_data, /* file with final histograms */
-            "metropolis_data/"
-            "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-hist",
-            simulation_parameters.tau_process,
-            simulation_parameters.tau_parameters[0],
-            simulation_parameters.M_process,
-            simulation_parameters.M_parameters[0],
-            simulation_parameters.E0,
-            simulation_parameters.trajectory_length,
-            simulation_parameters.beta_is,
-            simulation_parameters.quantity_of_interest);
+            simulation_parameters->tau_process,
+            simulation_parameters->tau_parameters[0],
+            simulation_parameters->M_process,
+            simulation_parameters->M_parameters[0],
+            simulation_parameters->E0,
+            simulation_parameters->trajectory_length,
+            simulation_parameters->beta_is,
+            simulation_parameters->quantity_of_interest);
+
+    return 0;
+}
 
 
-    /* initialize trajectory */
-    double *M, *tau;
-    tau = (double *) malloc( simulation_parameters.trajectory_length
-                            * sizeof(double) );
-    M = (double *) malloc( simulation_parameters.trajectory_length
-                            * sizeof(double) );
+int initialize_result(const Simulation_parameters *simulation_parameters,
+                      Result_data *result_data){
 
+    mkdir("metropolis_data", S_IRWXU | S_IRWXG | S_IRWXO);
+    sprintf(result_data->filename_data, /* file with final histograms */
+                "metropolis_data/"
+                "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-hist",
+                simulation_parameters->tau_process,
+                simulation_parameters->tau_parameters[0],
+                simulation_parameters->M_process,
+                simulation_parameters->M_parameters[0],
+                simulation_parameters->E0,
+                simulation_parameters->trajectory_length,
+                simulation_parameters->beta_is,
+                simulation_parameters->quantity_of_interest);
+
+    result_data->mean = 0;
+    result_data->variance = 0;
+    result_data->T_trust = -1;
+    result_data->acc = 0;
+    result_data->overshoot = 0;
+
+    result_data->hist_counts =
+            (int *) malloc( simulation_parameters->n_bins * sizeof(int) );
+    result_data->bin_centers =
+            (double *) malloc( simulation_parameters->n_bins * sizeof(double) );
+    result_data->hist_weighted =
+            (double *) malloc( simulation_parameters->n_bins * sizeof(double) );
+
+
+    /* fill the histograms with zeros and compute the center of the bins */
+    for(int i = 0; i < simulation_parameters->n_bins; i++) {
+        result_data->hist_weighted[i] = 0;
+        result_data->hist_counts[i] = 0;
+        result_data->bin_centers[i] = simulation_parameters->x_min
+                                    + simulation_parameters->delta * (double) i
+                                    + 0.5 * simulation_parameters->delta;
+
+        /* for the discrete observable center the bins */
+        if (simulation_parameters->quantity_of_interest == 'n') {
+            result_data->bin_centers[i] += -.5;
+        }
+    }
+
+    return 0;
+}
+
+int initialize_trajectory(double *tau, double *M,
+                          const Simulation_parameters *simulation_parameters) {
     /* load or create the trajectory */
-    FILE *fptr = fopen(simulation_parameters.filename, "r");
+    FILE *fptr = fopen(simulation_parameters->filename, "r");
     if (fptr == NULL) {
-        for (int i=0; i < simulation_parameters.trajectory_length; i++) {
+        for (int i=0; i < simulation_parameters->trajectory_length; i++) {
             tau[i] = generate_tau(simulation_parameters);
             M[i] = generate_M(simulation_parameters);
         }
     } else {
-        for (int i =0; i < simulation_parameters.trajectory_length; i++) {
+        for (int i =0; i < simulation_parameters->trajectory_length; i++) {
             fscanf(fptr,"%lf %lf", &M[i], &tau[i]);
         }
         fclose(fptr);
     }
+    return 1;
+}
 
 
-    /* compute first passage properties */
+
+
+int main(int argc, char *argv[]) {
+
+    /**************************************************************************/
+    /************************ Initialization Routine **************************/
+    /**************************************************************************/
+    double *M, *tau;
     double T_fp = 0;
     int n_fp = 0;
-    int fpp = compute_fp(&n_fp, &T_fp, simulation_parameters, M,tau );
+    int passage_happens = 1;            /* 1 does happen, -1 does not happen  */
 
-    /* initialize the results */
-    result_data.mean = 0;
-    result_data.variance = 0;
-    result_data.T_trust = -1;
-    result_data.acc = 0;
-    result_data.overshoot = 0;
+    Simulation_parameters simulation_parameters;
+    Result_data result_data;
 
-    /* initialize the histograms */
-    result_data.hist_counts = (int *) malloc( result_data.n_bins
-                                                * sizeof(int) );
-    result_data.bin_centers = (double *) malloc( result_data.n_bins
-                                                * sizeof(double) );
-    result_data.hist_weighted = (double *) malloc( result_data.n_bins
-                                                * sizeof(double) );
-
-    /* compute the width of the bin */
-    double delta = (result_data.x_max - result_data.x_min)
-                    / (double) result_data.n_bins;
-
-    /* fill the histograms with zeros and compute the center of the bins */
-    for(int i = 0; i < result_data.n_bins; i++) {
-        result_data.hist_weighted[i] = 0;
-        result_data.hist_counts[i] = 0;
-
-        if ( delta <= 1 && simulation_parameters.quantity_of_interest == 'n'){
-            /* if we are interested in discrete value,
-             * and the width is less than one,
-             * centers of bins are just in the positions */
-            result_data.bin_centers[i] = i;
-            /* the number of bins is truncated to avoid storing zeros */
-            result_data.n_bins = (int)(result_data.x_max - result_data.x_min)
-                                + 1;
-            /* update the width for the future use */
-            delta = 1;
-        } else {
-            result_data.bin_centers[i] = result_data.x_min
-                                         + ( (double) i + .5) * delta;
-        }
+    if (initialize_simulation(argc, argv,
+                              &simulation_parameters) == -1){
+        fprintf(stderr, "Error while initializing simulation\n");
     }
+    initialize_result(&simulation_parameters, &result_data);
+
+
+    tau = (double *) malloc( simulation_parameters.trajectory_length
+                            * sizeof(double) );
+    M = (double *) malloc( simulation_parameters.trajectory_length
+                            * sizeof(double) );
+    initialize_trajectory(tau, M, &simulation_parameters);
+
+    passage_happens = compute_fp(&n_fp, &T_fp, simulation_parameters, M,tau );
+
 
 
     /*************************************************************************/
@@ -483,7 +504,7 @@ int main(int argc, char *argv[]) {
     /* timers to estimate the execution time and print the progress */
     clock_t time_start, time_current;
     time_start = clock();
-    int time_taken_s, time_left_s; 
+    int time_taken_s, time_left_s;
     double it_per_sec;
 
 
@@ -531,8 +552,8 @@ int main(int argc, char *argv[]) {
             M_old[i] = M[indices_to_change[i]];
 
             /* generate new jumps */
-            tau[indices_to_change[i]] = generate_tau(simulation_parameters);
-            M[indices_to_change[i]] = generate_M(simulation_parameters);
+            tau[indices_to_change[i]] = generate_tau(&simulation_parameters);
+            M[indices_to_change[i]] = generate_M(&simulation_parameters);
 
             /* update the minimum index of the jump if necessary*/
             if (indices_to_change[i] < min_jump_index) {
@@ -555,11 +576,15 @@ int main(int argc, char *argv[]) {
                 /* NB when we call compute_fp, n_fp and T_fp are updated */
                 /* if there is no first passage */
                 result_data.overshoot ++;
+
                 if (result_data.T_trust > T_fp || result_data.T_trust == -1) {
                     result_data.T_trust = T_fp;
                 }
-                pAcc = 0;
-                /* if the overshoot happens we always reject the move */
+
+                if (simulation_parameters.beta_is != 0) {
+                    /* in the importance sampling scheme overshoot =  reject the move */
+                    pAcc = 0;
+                }
             }
 
 
@@ -608,9 +633,9 @@ int main(int argc, char *argv[]) {
                                 / (double) simulation_parameters.n_steps;
 
             /* compute the id of the bin in the histogram */
-            int bin_id = (int) floor( (observable - result_data.x_min)
-                                      / delta );
-            if(bin_id >= 0 && bin_id < result_data.n_bins) {
+            int bin_id = (int) floor( (observable - simulation_parameters.x_min)
+                                      / simulation_parameters.delta );
+            if(bin_id >= 0 && bin_id < simulation_parameters.n_bins) {
                 /* counts is increased by one */
                 result_data.hist_counts[bin_id] += 1;
                 /* in the weighted histogram we rescale the weight by a constant
@@ -624,6 +649,7 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+
     /* now we shift the value of the variance */
     result_data.variance = result_data.variance
                             - result_data.mean * result_data.mean;
@@ -649,6 +675,7 @@ int main(int argc, char *argv[]) {
                 / (double) simulation_parameters.n_steps);
 
     /* trajectory */
+    FILE *fptr;
     fptr = fopen(simulation_parameters.filename, "w");
     for (int i =0; i<simulation_parameters.trajectory_length; i++) {
         fprintf(fptr, "%f %f \n", M[i], tau[i]);
@@ -670,7 +697,7 @@ int main(int argc, char *argv[]) {
     fprintf(fptr, "# mean: %f variance: %f \n",
                    result_data.mean, result_data.variance);
 
-    for(int bin_id = 0; bin_id < result_data.n_bins; bin_id++){
+    for(int bin_id = 0; bin_id < simulation_parameters.n_bins; bin_id++){
         double average_ln_w =  ln_w(result_data.bin_centers[bin_id],
                                     result_data.bin_centers[bin_id],
                                     simulation_parameters);
