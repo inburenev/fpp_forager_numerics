@@ -569,8 +569,8 @@ int main(int argc, char *argv[]) {
 
         /* the main part of the Metropolis */
         /* store old first passage properties */
-        double T_fp_old = T_fp;
-        int n_fp_old = n_fp;
+        const double T_fp_old = T_fp;
+        const int n_fp_old = n_fp;
 
         /* first we perform a change of jumps */
         int min_jump_index = simulation_parameters.trajectory_length;
@@ -614,7 +614,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 if (simulation_parameters.beta_is != 0) {
-                    /* in the importance sampling scheme overshoot =  reject the move */
+                    /* in the importance sampling scheme overshoot = reject the move */
                     pAcc = 0;
                 }
             }
