@@ -62,7 +62,7 @@ typedef struct simulation_parameters {
 
     /* properties of the Metropolis algorithm */
     int trajectory_length;      /* maximum length of the trajectory */
-    char quantity_of_interest;  /* quantity of interest, 'T' or 'n'
+    char observable;  /* quantity of interest, 'T' or 'n'
                                    T -- lifetime of the particle
                                    n -- number of jumps before death */
     double beta_is;             /* importance sampling parameter */
@@ -231,7 +231,7 @@ int parse_arguments(int argc, char *argv[],
                 argument_index++;
                 simulation_parameters->beta_is = atof(argv[argument_index]);
                 argument_index++;
-                simulation_parameters->quantity_of_interest
+                simulation_parameters->observable
                                       = argv[argument_index][0];
             }
         }
@@ -350,14 +350,14 @@ int compute_fp(int *n_fp, double *T_fp,
 /***    Q(T,n) -- biased distribution used in importance sampling           ***/
 /*** the biased distribution is specified in simulation parameters          ***/
 double ln_w(const int n_fp, const double T_fp,
-            const Simulation_parameters simulation_parameters) {
-    switch (simulation_parameters.quantity_of_interest) {
+            const Simulation_parameters *simulation_parameters) {
+    switch (simulation_parameters->observable) {
         default:
             return 0;
         case 'n':
-            return simulation_parameters.beta_is * (double) n_fp;
+            return simulation_parameters->beta_is * (double) n_fp;
         case 'T':
-            return simulation_parameters.beta_is * T_fp;
+            return simulation_parameters->beta_is * T_fp;
     }
 }
 
@@ -376,7 +376,7 @@ int initialize_simulation(const int argc, char *argv[],
                     / (double) simulation_parameters->n_bins;;
 
     /* if the quantity of interest is discrete, bin width should be integer */
-    if ( simulation_parameters->quantity_of_interest == 'n') {
+    if ( simulation_parameters->observable == 'n') {
         simulation_parameters->delta = ceil(simulation_parameters->delta);
     }
 
@@ -393,7 +393,7 @@ int initialize_simulation(const int argc, char *argv[],
             simulation_parameters->E0,
             simulation_parameters->trajectory_length,
             simulation_parameters->beta_is,
-            simulation_parameters->quantity_of_interest);
+            simulation_parameters->observable);
 
     return 0;
 }
@@ -413,7 +413,7 @@ int initialize_result(const Simulation_parameters *simulation_parameters,
                 simulation_parameters->E0,
                 simulation_parameters->trajectory_length,
                 simulation_parameters->beta_is,
-                simulation_parameters->quantity_of_interest);
+                simulation_parameters->observable);
 
     result_data->mean = 0;
     result_data->variance = 0;
@@ -438,7 +438,7 @@ int initialize_result(const Simulation_parameters *simulation_parameters,
                                     + 0.5 * simulation_parameters->delta;
 
         /* for the discrete observable center the bins */
-        if (simulation_parameters->quantity_of_interest == 'n') {
+        if (simulation_parameters->observable == 'n') {
             result_data->bin_centers[i] += -.5;
         }
     }
@@ -465,6 +465,37 @@ int initialize_trajectory(double *tau, double *M,
 }
 
 
+int save_results(const Simulation_parameters *simulation_parameters,
+                const Result_data *result_data) {
+
+    FILE *fptr = fopen(result_data->filename_data, "w");
+
+    /* metadata */
+    fprintf(fptr,"# E0: %f \n ",            simulation_parameters->E0);
+    fprintf(fptr,"# n_steps: %lld \n ",     simulation_parameters->n_steps);
+    fprintf(fptr,"# acc: %lld \n ",         result_data->acc);
+    fprintf(fptr,"# overshoot: %lld \n ",   result_data->overshoot);
+    fprintf(fptr,"# beta_is: %f ,\n ",      simulation_parameters->beta_is);
+    fprintf(fptr,"# observable: %c \n ",    simulation_parameters->observable);
+    fprintf(fptr,"# mean: %f \n ",          result_data->mean);
+    fprintf(fptr,"# mean: %f \n ",          result_data->variance);
+
+    /* histograms */
+    for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
+        const double average_ln_w =  ln_w(result_data->bin_centers[bin_id],
+                                          result_data->bin_centers[bin_id],
+                                          simulation_parameters);
+        fprintf(fptr, "%f  %d  %f  %f  \n",
+                result_data->bin_centers[bin_id],
+                result_data->hist_counts[bin_id],
+                result_data->hist_weighted[bin_id],
+                average_ln_w);
+    }
+
+    fclose(fptr);
+    return 1;
+}
+
 
 
 int main(int argc, char *argv[]) {
@@ -472,6 +503,7 @@ int main(int argc, char *argv[]) {
     /**************************************************************************/
     /************************ Initialization Routine **************************/
     /**************************************************************************/
+
     double *M, *tau;
     double T_fp = 0;
     int n_fp = 0;
@@ -497,9 +529,9 @@ int main(int argc, char *argv[]) {
 
 
 
-    /*************************************************************************/
-    /************************  Metropolis algorithm  *************************/
-    /*************************************************************************/
+    /**************************************************************************/
+    /************************  Metropolis algorithm  **************************/
+    /**************************************************************************/
 
     /* timers to estimate the execution time and print the progress */
     clock_t time_start, time_current;
@@ -589,8 +621,8 @@ int main(int argc, char *argv[]) {
 
 
             /* compute the acceptance probability */
-            pAcc *= exp( ln_w(n_fp, T_fp, simulation_parameters)
-                        - ln_w(n_fp_old, T_fp_old, simulation_parameters) );
+            pAcc *= exp( ln_w(n_fp, T_fp, &simulation_parameters)
+                        - ln_w(n_fp_old, T_fp_old, &simulation_parameters) );
 
 
             if( rand() / (RAND_MAX + 1.0) < pAcc ){
@@ -617,10 +649,10 @@ int main(int argc, char *argv[]) {
             /* update the result with the obtained values */
             double observable = 0;
 
-            if (simulation_parameters.quantity_of_interest=='n') {
+            if (simulation_parameters.observable=='n') {
                 observable = (double) n_fp;
             }
-            if(simulation_parameters.quantity_of_interest=='T') {
+            if(simulation_parameters.observable=='T') {
                 observable = T_fp ;
             }
 
@@ -642,8 +674,8 @@ int main(int argc, char *argv[]) {
                  * to avoid numerical overflow */
                 double average_ln_w =  ln_w(result_data.bin_centers[bin_id],
                                             result_data.bin_centers[bin_id],
-                                            simulation_parameters);
-                double ln_w_current =  ln_w(n_fp, T_fp, simulation_parameters);
+                                            &simulation_parameters);
+                double ln_w_current =  ln_w(n_fp, T_fp, &simulation_parameters);
                 result_data.hist_weighted[bin_id] += exp( - ln_w_current
                                                           + average_ln_w);
             }
@@ -662,11 +694,10 @@ int main(int argc, char *argv[]) {
 
     /* basic information is printed in the command line */
     if(result_data.overshoot>0) {
-        printf("Warning: mean and variance are wrong due to overshoot, "
+        printf("Warning: overshoot,"
                 "consider increasing the maximum length of the trajectory");
     }
-    printf("mean: %.3f variance: %.3f:\n",
-            result_data.mean, result_data.variance);
+
     printf("acceptance rate: %.2f\n",
             (double) result_data.acc
                 / (double) simulation_parameters.n_steps);
@@ -674,38 +705,13 @@ int main(int argc, char *argv[]) {
             (double) result_data.overshoot
                 / (double) simulation_parameters.n_steps);
 
+    /* save the histogram and the trajectory */
+    save_results(&simulation_parameters, &result_data);
+
     /* trajectory */
-    FILE *fptr;
-    fptr = fopen(simulation_parameters.filename, "w");
+    FILE *fptr = fopen(simulation_parameters.filename, "w");
     for (int i =0; i<simulation_parameters.trajectory_length; i++) {
         fprintf(fptr, "%f %f \n", M[i], tau[i]);
-    }
-    fclose(fptr);
-
-    /* results */
-    fptr = fopen(result_data.filename_data, "w");
-    fprintf(fptr, "# E0: %f n_steps: %lld acc: %lld overshoot: %lld "
-                  "T_trust: %f  beta_is: %f observable: %c \n",
-                    simulation_parameters.E0,
-                    simulation_parameters.n_steps,
-                    result_data.acc,
-                    result_data.overshoot,
-                    result_data.T_trust,
-                    simulation_parameters.beta_is,
-                    simulation_parameters.quantity_of_interest);
-
-    fprintf(fptr, "# mean: %f variance: %f \n",
-                   result_data.mean, result_data.variance);
-
-    for(int bin_id = 0; bin_id < simulation_parameters.n_bins; bin_id++){
-        double average_ln_w =  ln_w(result_data.bin_centers[bin_id],
-                                    result_data.bin_centers[bin_id],
-                                    simulation_parameters);
-        fprintf(fptr, "%f  %d  %f  %f  \n",
-                result_data.bin_centers[bin_id],
-                result_data.hist_counts[bin_id],
-                result_data.hist_weighted[bin_id],
-                average_ln_w);
     }
     fclose(fptr);
 
