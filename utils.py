@@ -1,6 +1,7 @@
 """ Utility functions """
 
 import numpy as np
+import warnings
 
 
 def load_metadata(filename):
@@ -118,3 +119,76 @@ def load_data(filename):
     data = np.column_stack((x, counts, l10_px))
 
     return data
+
+
+def glued_histogram(filenames, n_threshold):
+    """
+    Combine histograms from multiple files by gluing them together.
+
+    Parameters
+    ----------
+    filenames : list of str
+        List of filenames containing histogram data.
+    n_threshold : int
+        Minimum number of samples in a bin required to consider it statistically significant.
+
+    Returns
+    -------
+    ndarray
+        A 2D array where each row represents a bin with the following columns:
+        - x : The centers of the bins.
+        - counts : The number of samples in each bin.
+        - l10_px : The log10 of the probability for each bin, adjusted for overlaps.
+
+    Raises
+    ------
+    ValueError
+        If the unbiased distribution is not found in any of the files, or if bin centers do not match.
+
+    """
+    # Map quasi-temperature to the filename
+    filenames_dict = {load_metadata(filename)['beta_is']: filename for filename in filenames}
+
+    if 0 not in filenames_dict:
+        raise ValueError("Unbiased distribution (beta_is = 0) not found in the files.")
+
+    # Initialize the histogram with the unbiased distribution
+    histogram = load_data(filenames_dict.pop(0))
+
+    # Sort the remaining filenames by 'beta_is'
+    beta_is_sorted = sorted(filenames_dict.keys(), key=abs)
+
+    # Process each histogram in sorted order
+    for beta_is in beta_is_sorted:
+        metadata_new = load_metadata(filenames_dict[beta_is])
+
+        if metadata_new['overshoot'] != 0:
+            print(f" Overshoot detected in histogram with beta_is = {beta_is} ({metadata_new['observable']})."
+                  f" Data will be ignored.")
+            continue
+
+        histogram_new = load_data(filenames_dict[beta_is])
+
+        # Check if bin centers match
+        if not np.array_equal(histogram[:, 0], histogram_new[:, 0]):
+            raise ValueError(
+                f"Bin centers in histogram with beta_is = {beta_is} do not match the unbiased histogram." 
+                f"Gluing procedure cannot be done.")
+
+        # Identify overlapping bins
+        ind_overlap = (histogram[:, 1] > n_threshold) & (histogram_new[:, 1] > n_threshold)
+
+        if ind_overlap.any():
+            # Compute adjustment for log10 probability
+            l10_diff = np.mean(histogram[ind_overlap, 2] - histogram_new[ind_overlap, 2])
+
+            # Update bins where new histogram has better statistics
+            ind_new_is_better = histogram_new[:, 1] > histogram[:, 1]
+            histogram[ind_new_is_better, 1] = histogram_new[ind_new_is_better, 1]
+            histogram[ind_new_is_better, 2] = histogram_new[ind_new_is_better, 2] + l10_diff
+
+    # remove the histogram with bad statistics
+    ind_trust = histogram[:, 1] <= n_threshold
+    histogram[ind_trust, 2] = -np.inf
+
+    return histogram
