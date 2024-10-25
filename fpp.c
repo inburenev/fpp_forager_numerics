@@ -99,7 +99,7 @@ typedef struct trajectory {
 
 
 /*** parse command line arguments  ***/
-// TODO: rewrite this function in a nicer way (using getopt)
+// TODO: rewrite this function in a nicer way (using getopt / config file?)
 int parse_arguments(int argc, char *argv[],
                     Simulation_parameters *simulation_parameters)
 {
