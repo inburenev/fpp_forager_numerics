@@ -1,12 +1,19 @@
 /******************************************************************************/
 /******** Compute the first passage properties of a foraging particle. ********/
 /******** example:                                                     ********/
-/*** ./fpp exp_tau 1 fixed_M 0.5 ic 10 rate 1 n_steps 10000000              ***/
-/***        traj_len 1000 r_traj 1 imp_s 0 n hist 0 1000 n_bins 1001        ***/
+/*** ./fpp conf-1                                                           ***/
 /***                                                                        ***/
 /******** Compile with: gcc -O3 fpp.c -o fpp                           ********/
 /***                                                                        ***/
-/*** Input: model and simulation parameters                                 ***/
+/*** Input: path to the configuration file with                             ***/
+/***        model and simulation parameters                                 ***/
+/*** Output: file with the statistics                                       ***/
+/***                                                                        ***/
+/*** Configuration file consists of three blocks                            ***/
+/***      [model]                                                           ***/
+/***      [simulation]                                                      ***/
+/***      [result]                                                          ***/
+/***        model and simulation parameters                                 ***/
 /***      - Distribution of time intervals.                                 ***/
 /***      - Parameters for time interval distribution.                      ***/
 /***      - Distribution of replenishments.                                 ***/
@@ -41,7 +48,7 @@
 #include <time.h>
 #include <sys/stat.h>
 
-typedef struct simulation_parameters {
+typedef struct parameters {
     /* the structure containing all the parameters for simulation */
 
     /* properties of the underlying process */
@@ -51,21 +58,22 @@ typedef struct simulation_parameters {
 
     /* dynamics */
     /* time intervals */
-    char tau_process[10];       /* distribution name */
+    char tau_distribution[10];  /* distribution type */
     int tau_n_parameters;       /* number of parameters in the distribution */
     double tau_parameters[10];  /* array of parameters */
 
     /* energy replenishments */
-    char M_process[10];         /* distribution name */
+    char M_distribution[10];    /* distribution type */
     int M_n_parameters;         /* number of parameters in the distribution */
     double M_parameters[10];    /* array of parameters */
 
     /* properties of the Metropolis algorithm */
     int trajectory_length;      /* maximum length of the trajectory */
-    char observable;  /* quantity of interest, 'T' or 'n'
+    char observable;            /* quantity of interest, 'T' or 'n'
                                    T -- lifetime of the particle
                                    n -- number of jumps before death */
-    double beta_is;             /* importance sampling parameter */
+    char tilt_type[10];         /* type of the tilt in IS scheme */
+    double theta_is;            /* importance sampling quasi temperature */
     long long n_steps;          /* number of steps in metropolis simulation */
     int n_changes;              /* number of jumps to change per step */
     char filename[100];         /* name of the file where the last
@@ -75,7 +83,7 @@ typedef struct simulation_parameters {
     double x_min, x_max;        /* endpoints of the histogram */
     int n_bins;                 /* number of bins in the histogram */
     double delta;               /* width of the bin */
-} Simulation_parameters;
+} Parameters;
 
 
 typedef struct result_data {
@@ -98,215 +106,149 @@ typedef struct trajectory {
 } Trajectory;
 
 
-/*** parse command line arguments  ***/
-// TODO: rewrite this function in a nicer way (using getopt / config file?)
-int parse_arguments(int argc, char *argv[],
-                    Simulation_parameters *simulation_parameters)
-{
-    /*
-     * this function parses arguments into the parameters of the simulation
-     * return -1 if the input is wrong
-     */
 
-    if (argc < 2 ) {
-        fprintf(stderr, "Wrong input parameters \n");
+#define MAX_LINE_LENGTH 256
+/*** loads the simulation parameters in from the configuration file         ***/
+int load_parameters(const char *filename,
+                    Parameters *parameters) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Could not open configuration file");
         return -1;
     }
 
-    int argument_index = 1;
-    /* we start with reading the parameters of the model */
-    // first we should have the process for time intervals
-    // for example: exp_tau 1
-    if (strcmp(argv[argument_index], "exp_tau") == 0) {
-        strcpy(simulation_parameters->tau_process, argv[argument_index]);
-        simulation_parameters->tau_n_parameters = 1;
-        if (argument_index + 1 < argc) {
-            argument_index++;
-            simulation_parameters->tau_parameters[0] = atof(argv[argument_index]);
+    char line[MAX_LINE_LENGTH];
+    char section[MAX_LINE_LENGTH] = "";
+
+    while (fgets(line, sizeof(line), file)) {
+        // Remove newline characters
+        line[strcspn(line, "\n")] = 0;
+
+        // Skip empty lines and comments
+        if (line[0] == '#' || strlen(line) == 0) continue;
+
+        // Detect section headers
+        if (line[0] == '[') {
+            sscanf(line, "[%[^]]", section);
+            continue;
         }
-    } else {
-        fprintf(stderr, "Invalid process for time intervals.\n");
-        return -1;
-    }
-    argument_index++;
 
+        // Parsing key-value pairs
+        if (strcmp(section, "model") == 0) {
+            if (strstr(line, "decay_rate") == line) {
+                sscanf(line, "decay_rate = %lf", &parameters->alpha);
+            } else if (strstr(line, "E0") == line) {
+                sscanf(line, "E0 = %lf", &parameters->E0);
+            } else if (strstr(line, "n_max") == line) {
+                sscanf(line, "trajectory_length = %lf", &parameters->trajectory_length);
+            } else if (strstr(line, "tau_distribution") == line) {
+                // note that sscanf breaks on the space
+                sscanf(line, "tau_distribution = %s", parameters->tau_distribution);
+                if (strcmp(parameters->tau_distribution, "exponential") == 0 ||
+                    strcmp(parameters->tau_distribution, "half_gaussian") == 0 ||
+                    strcmp(parameters->tau_distribution, "fixed") == 0 ||
+                    strcmp(parameters->tau_distribution, "uniform") == 0) {
+                    // all four distributions have one parameter
+                    parameters->tau_n_parameters = 1;
 
-    // then we should have the process for replenishment
-    // for example: exp_M 1 or fixed_M 0.5
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "exp_M") == 0
-            || strcmp(argv[argument_index], "fixed_M") == 0) {
-            strcpy(simulation_parameters->M_process, argv[argument_index]);
-            simulation_parameters->M_n_parameters = 1;
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->M_parameters[0]
-                                        = atof(argv[argument_index]);
+                    char param_str[MAX_LINE_LENGTH];
+                    sscanf(line, "tau_distribution = %*s [%[^]]", param_str);
+                    parameters->tau_parameters[0] = atof(param_str);
+
+                    } else {
+                        fprintf(stderr, "Error: Unknown tau_distribution %s\n",
+                                         parameters->tau_distribution);
+                        fclose(file);
+                        return -1;
+                    }
+            } else if (strstr(line, "M_distribution") == line) {
+                sscanf(line, "M_distribution = %s", parameters->M_distribution);
+                if (strcmp(parameters->M_distribution, "exponential") == 0 ||
+                    strcmp(parameters->M_distribution, "half_gaussian") == 0 ||
+                    strcmp(parameters->M_distribution, "fixed") == 0 ||
+                    strcmp(parameters->M_distribution, "uniform") == 0) {
+
+                    parameters->M_n_parameters = 1;
+                    char param_str[MAX_LINE_LENGTH];
+                    sscanf(line, "M_distribution = %*s [%[^]]", param_str);
+                    parameters->M_parameters[0] = atof(param_str);
+                    } else {
+                        fprintf(stderr, "Error: Unknown M_distribution %s\n",
+                                parameters->M_distribution);
+                        fclose(file);
+                        return -1;
+                    }
             }
+        } else if (strcmp(section, "simulation") == 0) {
+            if (strstr(line, "n_changes") == line) {
+                sscanf(line, "n_changes = %lf", &parameters->n_changes);
+            } else if (strstr(line, "importance_sampling") == line) {
+                sscanf(line, "importance_sampling = %s", parameters->tilt_type);
+
+                if (strcmp(parameters->tilt_type, "exponential") == 0) {
+                    char param_str[MAX_LINE_LENGTH];
+                    sscanf(line, "importance_sampling = %*s [%[^]]", param_str);
+                    parameters->theta_is = atof(param_str);
+                } else if (strcmp(parameters->tilt_type, "none") == 0) {
+                    parameters->theta_is = 0;
+                } else {
+                    fprintf(stderr, "Error: Unknown importance_sampling type %s\n",
+                            parameters->tilt_type);
+                    fclose(file);
+                    return -1;
+                }
+            } else if (strstr(line, "n_steps") == line) {
+                sscanf(line, "n_steps = %lld", &parameters->n_steps);
             }
-    } else {
-        fprintf(stderr, "Invalid process for energy replenishments intervals.\n");
-        return -1;
-    }
-    argument_index++;
-
-
-
-    // after that we have initial conditions
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "ic") == 0) {
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->E0 = atof(argv[argument_index]);
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid initial conditions.\n");
-        return -1;
-    }
-    argument_index++;
-
-    // then the rate of the decay
-    if (argument_index  < argc) {
-        if (strcmp(argv[argument_index], "rate") == 0) {
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->alpha = atof(argv[argument_index]);
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid decay rate.\n");
-        return -1;
-    }
-    argument_index++;
-
-    /* now the model is defined and we proceed to the metropolis parameters */
-    // the number of steps in metropolis
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "n_steps") == 0) {
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->n_steps = atoll(argv[argument_index]);
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid number of steps.\n");
-        return -1;
-    }
-    argument_index++;
-
-    // maximum length of the trajectory
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "traj_len") == 0) {
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->trajectory_length
-                                      = atoi(argv[argument_index]);
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid number of steps.\n");
-        return -1;
-    }
-    argument_index++;
-
-    // number of jumps to change per metropolis step
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "r_traj") == 0) {
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->n_changes = atoi(argv[argument_index]);
+        } else if (strcmp(section, "result") == 0) {
+            if (strstr(line, "observable") == line) {
+                sscanf(line, "observable = %c", &parameters->observable);
+            } else if (strstr(line, "hist_min") == line) {
+                sscanf(line, "hist_min = %lf", &parameters->x_min);
+            } else if (strstr(line, "hist_max") == line) {
+                sscanf(line, "hist_max = %lf", &parameters->x_max);
+            } else if (strstr(line, "n_bins") == line) {
+                sscanf(line, "n_bins = %d", &parameters->n_bins);
             }
         }
-    } else {
-        fprintf(stderr, "Invalid number of jumps to change.\n");
-        return -1;
-    }
-    argument_index++;
-
-    // importance sampling parameters
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "imp_s") == 0) {
-            if (argument_index + 2 < argc) {
-                argument_index++;
-                simulation_parameters->beta_is = atof(argv[argument_index]);
-                argument_index++;
-                simulation_parameters->observable
-                                      = argv[argument_index][0];
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid importance sampling parameters.\n");
-        return -1;
-    }
-    argument_index++;
-
-    /* the parameters of the histogram */
-    // min and max max_value in the histogram
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "hist") == 0) {
-            if (argument_index + 2 < argc) {
-                argument_index++;
-                simulation_parameters->x_min = atof(argv[argument_index]);
-                argument_index++;
-                simulation_parameters->x_max = atof(argv[argument_index]);
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid parameters of histogram.\n");
-        return -1;
-    }
-    argument_index++;
-
-    // number of bins in the histogram
-    if (argument_index < argc) {
-        if (strcmp(argv[argument_index], "n_bins") == 0) {
-            if (argument_index + 1 < argc) {
-                argument_index++;
-                simulation_parameters->n_bins = atoi(argv[argument_index]);
-            }
-        }
-    } else {
-        fprintf(stderr, "Invalid parameters of histogram.\n");
-        return -1;
     }
 
+    fclose(file);
     return 0;
 }
 
 
 /*** generate random variable from an exponential distribution              ***/
 /*** probability density: p(x) = lambda * exp( - lambda * x )               ***/
-double generate_exponential(double lambda)
+double generate_exponential(const double lambda)
 {
     const double u = rand() / (RAND_MAX + 1.0);
-    return -log(1 - u) / lambda;
+    return - log(1 - u) / lambda;
 }
 
 
 /*** generate a replenishment                                               ***/
 /*** the probability distribution is specified in simulation parameters     ***/
-double generate_M(const Simulation_parameters *simulation_parameters)
+double generate_M(const Parameters *parameters)
 {
     /* fixed replenishment */
-    if (strcmp(simulation_parameters->M_process, "fixed_M") == 0) {
-        /* fixed replenishment */
-        return  simulation_parameters->M_parameters[0];
+    if (strcmp(parameters->M_distribution, "fixed") == 0) {
+        return  parameters->M_parameters[0];
     }
     /* exponential replenishment */
-    if (strcmp(simulation_parameters->M_process, "exp_M") == 0) {
-        return  generate_exponential(simulation_parameters->M_parameters[0]);
+    if (strcmp(parameters->M_distribution, "exponential") == 0) {
+        return  generate_exponential(parameters->M_parameters[0]);
     }
     return 0;
 }
 
 /*** generate a single time interval                                        ***/
 /*** the probability distribution is specified in simulation parameters     ***/
-double generate_tau(const Simulation_parameters *simulation_parameters)
+double generate_tau(const Parameters *simulation_parameters)
 {
     /* generate a single time interval */
     /* the probability distribution is defined in process_parameters */
-    if (strcmp(simulation_parameters->tau_process, "exp_tau") == 0) {
+    if (strcmp(simulation_parameters->tau_distribution, "exponential") == 0) {
         /* exponential time intervals */
         return generate_exponential(simulation_parameters->tau_parameters[0]);
     }
@@ -321,7 +263,7 @@ double generate_tau(const Simulation_parameters *simulation_parameters)
 /***            T_fp -- total time; n_fp -- length                          ***/
 /*** NB: n_fp > 0 (the definition of the model)                             ***/
 int compute_fp(int *n_fp, double *T_fp,
-               const Simulation_parameters simulation_parameters,
+               const Parameters simulation_parameters,
                double const *M, double const *tau)
 {
     double E_current = simulation_parameters.E0;
@@ -350,23 +292,22 @@ int compute_fp(int *n_fp, double *T_fp,
 /***    Q(T,n) -- biased distribution used in importance sampling           ***/
 /*** the biased distribution is specified in simulation parameters          ***/
 double ln_w(const int n_fp, const double T_fp,
-            const Simulation_parameters *simulation_parameters) {
+            const Parameters *simulation_parameters) {
     switch (simulation_parameters->observable) {
         default:
             return 0;
         case 'n':
-            return simulation_parameters->beta_is * (double) n_fp;
+            return simulation_parameters->theta_is * (double) n_fp;
         case 'T':
-            return simulation_parameters->beta_is * T_fp;
+            return simulation_parameters->theta_is * T_fp;
     }
 }
 
 /*** initialize the simulation by loading the command line parameters       ***/
 int initialize_simulation(const int argc, char *argv[],
-                          Simulation_parameters *simulation_parameters) {
+                          Parameters *simulation_parameters) {
 
-    if (parse_arguments(argc, argv,
-                        simulation_parameters) == -1) {
+    if (load_parameters(argv[1], simulation_parameters) == -1) {
         fprintf(stderr, "Error while passing arguments\n");
         return -1;
     }
@@ -386,33 +327,33 @@ int initialize_simulation(const int argc, char *argv[],
     sprintf(simulation_parameters->filename, /* file with trajectory */
             "metropolis_conf/"
             "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-conf",
-            simulation_parameters->tau_process,
+            simulation_parameters->tau_distribution,
             simulation_parameters->tau_parameters[0],
-            simulation_parameters->M_process,
+            simulation_parameters->M_distribution,
             simulation_parameters->M_parameters[0],
             simulation_parameters->E0,
             simulation_parameters->trajectory_length,
-            simulation_parameters->beta_is,
+            simulation_parameters->theta_is,
             simulation_parameters->observable);
 
     return 0;
 }
 
 
-int initialize_result(const Simulation_parameters *simulation_parameters,
+int initialize_result(const Parameters *simulation_parameters,
                       Result_data *result_data){
 
     mkdir("metropolis_data", S_IRWXU | S_IRWXG | S_IRWXO);
     sprintf(result_data->filename_data, /* file with final histograms */
                 "metropolis_data/"
                 "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-hist",
-                simulation_parameters->tau_process,
+                simulation_parameters->tau_distribution,
                 simulation_parameters->tau_parameters[0],
-                simulation_parameters->M_process,
+                simulation_parameters->M_distribution,
                 simulation_parameters->M_parameters[0],
                 simulation_parameters->E0,
                 simulation_parameters->trajectory_length,
-                simulation_parameters->beta_is,
+                simulation_parameters->theta_is,
                 simulation_parameters->observable);
 
     result_data->mean = 0;
@@ -447,7 +388,7 @@ int initialize_result(const Simulation_parameters *simulation_parameters,
 }
 
 int initialize_trajectory(double *tau, double *M,
-                          const Simulation_parameters *simulation_parameters) {
+                          const Parameters *simulation_parameters) {
     /* load or create the trajectory */
     FILE *fptr = fopen(simulation_parameters->filename, "r");
     if (fptr == NULL) {
@@ -465,7 +406,7 @@ int initialize_trajectory(double *tau, double *M,
 }
 
 
-int save_results(const Simulation_parameters *simulation_parameters,
+int save_results(const Parameters *simulation_parameters,
                 const Result_data *result_data) {
 
     FILE *fptr = fopen(result_data->filename_data, "w");
@@ -475,7 +416,7 @@ int save_results(const Simulation_parameters *simulation_parameters,
     fprintf(fptr,"# n_steps: %lld \n ",     simulation_parameters->n_steps);
     fprintf(fptr,"# acc: %lld \n ",         result_data->acc);
     fprintf(fptr,"# overshoot: %lld \n ",   result_data->overshoot);
-    fprintf(fptr,"# beta_is: %f \n ",       simulation_parameters->beta_is);
+    fprintf(fptr,"# theta_is: %f \n ",       simulation_parameters->theta_is);
     fprintf(fptr,"# observable: %c \n ",    simulation_parameters->observable);
     fprintf(fptr,"# mean: %f \n ",          result_data->mean);
     fprintf(fptr,"# variance: %f \n ",      result_data->variance);
@@ -509,7 +450,7 @@ int main(int argc, char *argv[]) {
     int n_fp = 0;
     int passage_happens = 1;            /* 1 does happen, -1 does not happen  */
 
-    Simulation_parameters simulation_parameters;
+    Parameters simulation_parameters;
     Result_data result_data;
 
     if (initialize_simulation(argc, argv,
@@ -613,7 +554,7 @@ int main(int argc, char *argv[]) {
                     result_data.T_trust = T_fp;
                 }
 
-                if (simulation_parameters.beta_is != 0) {
+                if (simulation_parameters.theta_is != 0) {
                     /* in the importance sampling scheme overshoot = reject the move */
                     pAcc = 0;
                 }
