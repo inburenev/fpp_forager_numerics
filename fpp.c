@@ -226,6 +226,28 @@ double generate_exponential(const double lambda)
     return - log(1 - u) / lambda;
 }
 
+/*** generate random variable from uniform distribution on [a,b]            ***/
+double generate_uniform(const double low, const double high) {
+    const double u = rand() / (RAND_MAX + 1.0);
+    return low + u * (high - low);
+}
+
+/*** generate random variable from half gaussian distribution               ***/
+/*** probability density:                                                   ***/
+/***        p(x) =  sqrt(2/pi) * lambda * exp( - lambda^2 * x^2 / 2 )       ***/
+double generate_half_gaussian(const double lambda) {
+    const double u1 = rand() / (RAND_MAX + 1.0);
+    const double u2 = rand() / (RAND_MAX + 1.0);
+
+    // Box-Muller transform
+    const double z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+
+    return fabs( z0 / lambda );
+}
+
+
+
+
 
 /*** generate a replenishment                                               ***/
 /*** the probability distribution is specified in simulation parameters     ***/
@@ -239,18 +261,37 @@ double generate_M(const Parameters *parameters)
     if (strcmp(parameters->M_distribution, "exponential") == 0) {
         return  generate_exponential(parameters->M_parameters[0]);
     }
+    /* uniform replenishment */
+    if (strcmp(parameters->M_distribution, "uniform") == 0) {
+        return  generate_uniform(0, 1 / parameters->M_parameters[0]);
+    }
+    /* uniform replenishment */
+    if (strcmp(parameters->M_distribution, "half_gaussian") == 0) {
+        return  generate_half_gaussian(parameters->M_parameters[0]);
+    }
+
     return 0;
 }
 
 /*** generate a single time interval                                        ***/
 /*** the probability distribution is specified in simulation parameters     ***/
-double generate_tau(const Parameters *simulation_parameters)
+double generate_tau(const Parameters *parameters)
 {
-    /* generate a single time interval */
-    /* the probability distribution is defined in process_parameters */
-    if (strcmp(simulation_parameters->tau_distribution, "exponential") == 0) {
-        /* exponential time intervals */
-        return generate_exponential(simulation_parameters->tau_parameters[0]);
+    /* fixed replenishment */
+    if (strcmp(parameters->tau_distribution, "fixed") == 0) {
+        return  parameters->tau_parameters[0];
+    }
+    /* exponential replenishment */
+    if (strcmp(parameters->tau_distribution, "exponential") == 0) {
+        return  generate_exponential(parameters->tau_parameters[0]);
+    }
+    /* uniform replenishment */
+    if (strcmp(parameters->tau_distribution, "uniform") == 0) {
+        return  generate_uniform(0, 1 / parameters->tau_parameters[0]);
+    }
+    /* uniform replenishment */
+    if (strcmp(parameters->tau_distribution, "half_gaussian") == 0) {
+        return  generate_half_gaussian(parameters->tau_parameters[0]);
     }
     return 0;
 }
@@ -263,22 +304,22 @@ double generate_tau(const Parameters *simulation_parameters)
 /***            T_fp -- total time; n_fp -- length                          ***/
 /*** NB: n_fp > 0 (the definition of the model)                             ***/
 int compute_fp(int *n_fp, double *T_fp,
-               const Parameters simulation_parameters,
+               const Parameters parameters,
                double const *M, double const *tau)
 {
-    double E_current = simulation_parameters.E0;
+    double E_current = parameters.E0;
 
     /* Initialize first passage properties */
     *T_fp = 0;
     *n_fp = 0;
 
     /* Check when the trajectory reaches zero */
-    for (int i = 0; i < simulation_parameters.trajectory_length; i++) {
-        E_current += M[i] - simulation_parameters.alpha * tau[i];
+    for (int i = 0; i < parameters.trajectory_length; i++) {
+        E_current += M[i] - parameters.alpha * tau[i];
         *T_fp += tau[i];
         *n_fp += 1;
         if (E_current <= 0) { /* Check whether the trajectory reached zero */
-            *T_fp += E_current / simulation_parameters.alpha;
+            *T_fp += E_current / parameters.alpha;
             return 1;
         }
     }
@@ -416,7 +457,7 @@ int save_results(const Parameters *simulation_parameters,
     fprintf(fptr,"# n_steps: %lld \n ",     simulation_parameters->n_steps);
     fprintf(fptr,"# acc: %lld \n ",         result_data->acc);
     fprintf(fptr,"# overshoot: %lld \n ",   result_data->overshoot);
-    fprintf(fptr,"# theta_is: %f \n ",       simulation_parameters->theta_is);
+    fprintf(fptr,"# theta_is: %f \n ",      simulation_parameters->theta_is);
     fprintf(fptr,"# observable: %c \n ",    simulation_parameters->observable);
     fprintf(fptr,"# mean: %f \n ",          result_data->mean);
     fprintf(fptr,"# variance: %f \n ",      result_data->variance);
