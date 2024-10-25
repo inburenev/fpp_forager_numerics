@@ -58,12 +58,12 @@ typedef struct parameters {
 
     /* dynamics */
     /* time intervals */
-    char tau_distribution[10];  /* distribution type */
+    char tau_distribution[20];  /* distribution type */
     int tau_n_parameters;       /* number of parameters in the distribution */
     double tau_parameters[10];  /* array of parameters */
 
     /* energy replenishments */
-    char M_distribution[10];    /* distribution type */
+    char M_distribution[20];    /* distribution type */
     int M_n_parameters;         /* number of parameters in the distribution */
     double M_parameters[10];    /* array of parameters */
 
@@ -139,8 +139,8 @@ int load_parameters(const char *filename,
                 sscanf(line, "decay_rate = %lf", &parameters->alpha);
             } else if (strstr(line, "E0") == line) {
                 sscanf(line, "E0 = %lf", &parameters->E0);
-            } else if (strstr(line, "n_max") == line) {
-                sscanf(line, "trajectory_length = %lf", &parameters->trajectory_length);
+            } else if (strstr(line, "trajectory_length") == line) {
+                sscanf(line, "trajectory_length = %d", &parameters->trajectory_length);
             } else if (strstr(line, "tau_distribution") == line) {
                 // note that sscanf breaks on the space
                 sscanf(line, "tau_distribution = %s", parameters->tau_distribution);
@@ -181,7 +181,7 @@ int load_parameters(const char *filename,
             }
         } else if (strcmp(section, "simulation") == 0) {
             if (strstr(line, "n_changes") == line) {
-                sscanf(line, "n_changes = %lf", &parameters->n_changes);
+                sscanf(line, "n_changes = %d", &parameters->n_changes);
             } else if (strstr(line, "importance_sampling") == line) {
                 sscanf(line, "importance_sampling = %s", parameters->tilt_type);
 
@@ -479,7 +479,6 @@ int save_results(const Parameters *simulation_parameters,
 }
 
 
-
 int main(int argc, char *argv[]) {
 
     /**************************************************************************/
@@ -624,6 +623,7 @@ int main(int argc, char *argv[]) {
                 T_fp = T_fp_old;
                 n_fp = n_fp_old;
             }
+
         }
 
         /* if there were no overshoot we update the results */
