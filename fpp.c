@@ -367,7 +367,7 @@ int initialize_simulation(const int argc, char *argv[],
     mkdir("metropolis_conf", S_IRWXU | S_IRWXG | S_IRWXO);
     sprintf(simulation_parameters->filename, /* file with trajectory */
             "metropolis_conf/"
-            "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-conf",
+            "%s-%.2f-%s-%.2f-E0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
             simulation_parameters->tau_distribution,
             simulation_parameters->tau_parameters[0],
             simulation_parameters->M_distribution,
@@ -387,7 +387,7 @@ int initialize_result(const Parameters *simulation_parameters,
     mkdir("metropolis_data", S_IRWXU | S_IRWXG | S_IRWXO);
     sprintf(result_data->filename_data, /* file with final histograms */
                 "metropolis_data/"
-                "%s-%.2f-%s-%.2f-E0=%.0f-traj_len=%d-IS=%.8f-%c-hist",
+                "%s-%.2f-%s-%.2f-E0=%.3f-traj_len=%d-IS=%.4f-%c-hist",
                 simulation_parameters->tau_distribution,
                 simulation_parameters->tau_parameters[0],
                 simulation_parameters->M_distribution,
@@ -549,81 +549,100 @@ int main(int argc, char *argv[]) {
         }
 
         /* the main part of the Metropolis */
-        /* store old first passage properties */
-        const double T_fp_old = T_fp;
-        const int n_fp_old = n_fp;
-
-        /* first we perform a change of jumps */
-        int min_jump_index = simulation_parameters.trajectory_length;
-        for(int i = 0; i < simulation_parameters.n_changes; i++) {
-            /* pick a random index [0, trajectory_length) */
-            indices_to_change[i] = rand()
-                                   % simulation_parameters.trajectory_length;
-
-            /* store old jumps */
-            tau_old[i] = tau[indices_to_change[i]];
-            M_old[i] = M[indices_to_change[i]];
-
-            /* generate new jumps */
-            tau[indices_to_change[i]] = generate_tau(&simulation_parameters);
-            M[indices_to_change[i]] = generate_M(&simulation_parameters);
-
-            /* update the minimum index of the jump if necessary*/
-            if (indices_to_change[i] < min_jump_index) {
-                min_jump_index = indices_to_change[i];
+        if (simulation_parameters.n_changes == -1 ) {
+            n_fp = 0;
+            T_fp = 0;
+            double E_current = simulation_parameters.E0;
+            // n_changes = -1 create the new trajectory at each step
+            for (int i=0; i < simulation_parameters.trajectory_length; i++) {
+                tau[i] = generate_tau(&simulation_parameters);
+                M[i] = generate_M(&simulation_parameters);
+                E_current += M[i] - simulation_parameters.alpha * tau[i];
+                T_fp += tau[i];
+                n_fp += 1;
+                if (E_current <= 0) { /* Check whether the trajectory reached zero */
+                    T_fp += E_current / simulation_parameters.alpha;
+                    break;
+                }
             }
-        }
-
-
-        if (min_jump_index > n_fp_old) {
-            /* if all updates happened after the trajectory reached zero,
-             * then the first passage properties remain the same
-             * and hence the Metropolis move is always accepted */
             result_data.acc ++;
         } else {
-            /* at least some of the changes have happened before the
-             * trajectory has reached zero, so we need to update
-             * the first passage properties */
-            double pAcc = 1;
-            if(compute_fp(&n_fp, &T_fp, simulation_parameters, M,tau ) == -1 ) {
-                /* NB when we call compute_fp, n_fp and T_fp are updated */
-                /* if there is no first passage */
-                result_data.overshoot ++;
+            /* store old first passage properties */
+            const double T_fp_old = T_fp;
+            const int n_fp_old = n_fp;
 
-                if (result_data.T_trust > T_fp || result_data.T_trust == -1) {
-                    result_data.T_trust = T_fp;
-                }
+            /* first we perform a change of jumps */
+            int min_jump_index = simulation_parameters.trajectory_length;
+            for(int i = 0; i < simulation_parameters.n_changes; i++) {
+                /* pick a random index [0, trajectory_length) */
+                indices_to_change[i] = rand()
+                                       % simulation_parameters.trajectory_length;
 
-                if (simulation_parameters.theta_is != 0) {
-                    /* in the importance sampling scheme overshoot = reject the move */
-                    pAcc = 0;
+                /* store old jumps */
+                tau_old[i] = tau[indices_to_change[i]];
+                M_old[i] = M[indices_to_change[i]];
+
+                /* generate new jumps */
+                tau[indices_to_change[i]] = generate_tau(&simulation_parameters);
+                M[indices_to_change[i]] = generate_M(&simulation_parameters);
+
+                /* update the minimum index of the jump if necessary*/
+                if (indices_to_change[i] < min_jump_index) {
+                    min_jump_index = indices_to_change[i];
                 }
             }
 
 
-            /* compute the acceptance probability */
-            pAcc *= exp( ln_w(n_fp, T_fp, &simulation_parameters)
-                        - ln_w(n_fp_old, T_fp_old, &simulation_parameters) );
-
-
-            if( rand() / (RAND_MAX + 1.0) < pAcc ){
+            if (min_jump_index > n_fp_old) {
+                /* if all updates happened after the trajectory reached zero,
+                 * then the first passage properties remain the same
+                 * and hence the Metropolis move is always accepted */
                 result_data.acc ++;
             } else {
-                /* the new trajectory is rejected
-                 * and the changes should be reverted */
+                /* at least some of the changes have happened before the
+                 * trajectory has reached zero, so we need to update
+                 * the first passage properties */
+                double pAcc = 1;
+                if(compute_fp(&n_fp, &T_fp, simulation_parameters, M,tau ) == -1 ) {
+                    /* NB when we call compute_fp, n_fp and T_fp are updated */
+                    /* if there is no first passage */
+                    result_data.overshoot ++;
 
-                for(int i = simulation_parameters.n_changes - 1; i >=0; i--) {
-                    /* NB as the indices may repeat, the loop should iterate in
-                     * the opposite direction to revert the changes properly. */
-                    tau[indices_to_change[i]] = tau_old[i];
-                    M[indices_to_change[i]] = M_old[i];
+                    if (result_data.T_trust > T_fp || result_data.T_trust == -1) {
+                        result_data.T_trust = T_fp;
+                    }
+
+                    if (simulation_parameters.theta_is != 0) {
+                        /* in the importance sampling scheme overshoot = reject the move */
+                        pAcc = 0;
+                    }
                 }
 
-                /* restore first passage properties to its original values */
-                T_fp = T_fp_old;
-                n_fp = n_fp_old;
-            }
 
+                /* compute the acceptance probability */
+                pAcc *= exp( ln_w(n_fp, T_fp, &simulation_parameters)
+                            - ln_w(n_fp_old, T_fp_old, &simulation_parameters) );
+
+
+                if( rand() / (RAND_MAX + 1.0) < pAcc ){
+                    result_data.acc ++;
+                } else {
+                    /* the new trajectory is rejected
+                     * and the changes should be reverted */
+
+                    for(int i = simulation_parameters.n_changes - 1; i >=0; i--) {
+                        /* NB as the indices may repeat, the loop should iterate in
+                         * the opposite direction to revert the changes properly. */
+                        tau[indices_to_change[i]] = tau_old[i];
+                        M[indices_to_change[i]] = M_old[i];
+                    }
+
+                    /* restore first passage properties to its original values */
+                    T_fp = T_fp_old;
+                    n_fp = n_fp_old;
+                }
+
+            }
         }
 
         /* if there were no overshoot we update the results */
@@ -686,6 +705,8 @@ int main(int argc, char *argv[]) {
     printf("overshoot rate: %.2f\n",
             (double) result_data.overshoot
                 / (double) simulation_parameters.n_steps);
+
+    printf("output saved in: %s", result_data.filename_data);
 
     /* save the histogram and the trajectory */
     save_results(&simulation_parameters, &result_data);
