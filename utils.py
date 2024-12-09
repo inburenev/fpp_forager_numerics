@@ -31,7 +31,7 @@ def create_configfile(filename: str, parameters: dict) -> None:
     parameters_to_write = {
         'model': {
             'X0': 0,  'drift': 1, 'trajectory_length': 10000,
-            'tau_distribution': f'exponential [{1}]',
+            't_distribution': f'exponential [{1}]',
             'M_distribution': f'exponential [{1}]',
         },
         'simulation': {

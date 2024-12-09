@@ -57,7 +57,7 @@ typedef struct parameters {
 
     /* dynamics */
     /* time intervals */
-    char tau_distribution[20];  /* distribution type */
+    char t_distribution[20];  /* distribution type */
     int tau_n_parameters;       /* number of parameters in the distribution */
     double tau_parameters[10];  /* array of parameters */
 
@@ -141,23 +141,23 @@ int load_parameters(const char *filename,
                 sscanf(line, "X0 = %lf", &parameters->X0);
             } else if (strstr(line, "trajectory_length") == line) {
                 sscanf(line, "trajectory_length = %d", &parameters->trajectory_length);
-            } else if (strstr(line, "tau_distribution") == line) {
+            } else if (strstr(line, "t_distribution") == line) {
                 // note that sscanf breaks on the space
-                sscanf(line, "tau_distribution = %s", parameters->tau_distribution);
-                if (strcmp(parameters->tau_distribution, "exponential") == 0 ||
-                    strcmp(parameters->tau_distribution, "half_gaussian") == 0 ||
-                    strcmp(parameters->tau_distribution, "fixed") == 0 ||
-                    strcmp(parameters->tau_distribution, "uniform") == 0) {
+                sscanf(line, "t_distribution = %s", parameters->t_distribution);
+                if (strcmp(parameters->t_distribution, "exponential") == 0 ||
+                    strcmp(parameters->t_distribution, "half_gaussian") == 0 ||
+                    strcmp(parameters->t_distribution, "fixed") == 0 ||
+                    strcmp(parameters->t_distribution, "uniform") == 0) {
                     // all four distributions have one parameter
                     parameters->tau_n_parameters = 1;
 
                     char param_str[MAX_LINE_LENGTH];
-                    sscanf(line, "tau_distribution = %*s [%[^]]", param_str);
+                    sscanf(line, "t_distribution = %*s [%[^]]", param_str);
                     parameters->tau_parameters[0] = atof(param_str);
 
                     } else {
-                        fprintf(stderr, "Error: Unknown tau_distribution %s\n",
-                                         parameters->tau_distribution);
+                        fprintf(stderr, "Error: Unknown t_distribution %s\n",
+                                         parameters->t_distribution);
                         fclose(file);
                         return -1;
                     }
@@ -278,19 +278,19 @@ double generate_M(const Parameters *parameters)
 double generate_tau(const Parameters *parameters)
 {
     /* fixed replenishment */
-    if (strcmp(parameters->tau_distribution, "fixed") == 0) {
+    if (strcmp(parameters->t_distribution, "fixed") == 0) {
         return  parameters->tau_parameters[0];
     }
     /* exponential replenishment */
-    if (strcmp(parameters->tau_distribution, "exponential") == 0) {
+    if (strcmp(parameters->t_distribution, "exponential") == 0) {
         return  generate_exponential(parameters->tau_parameters[0]);
     }
     /* uniform replenishment */
-    if (strcmp(parameters->tau_distribution, "uniform") == 0) {
+    if (strcmp(parameters->t_distribution, "uniform") == 0) {
         return  generate_uniform(0, parameters->tau_parameters[0]);
     }
     /* uniform replenishment */
-    if (strcmp(parameters->tau_distribution, "half_gaussian") == 0) {
+    if (strcmp(parameters->t_distribution, "half_gaussian") == 0) {
         return  generate_half_gaussian(parameters->tau_parameters[0]);
     }
     return 0;
@@ -368,7 +368,7 @@ int initialize_simulation(const int argc, char *argv[],
     sprintf(simulation_parameters->filename, /* file with trajectory */
             "metropolis_conf/"
             "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
-            simulation_parameters->tau_distribution,
+            simulation_parameters->t_distribution,
             simulation_parameters->tau_parameters[0],
             simulation_parameters->M_distribution,
             simulation_parameters->M_parameters[0],
@@ -388,7 +388,7 @@ int initialize_result(const Parameters *simulation_parameters,
     sprintf(result_data->filename_data, /* file with final histograms */
                 "metropolis_data/"
                 "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-hist",
-                simulation_parameters->tau_distribution,
+                simulation_parameters->t_distribution,
                 simulation_parameters->tau_parameters[0],
                 simulation_parameters->M_distribution,
                 simulation_parameters->M_parameters[0],
@@ -568,16 +568,18 @@ int main(int argc, char *argv[]) {
                 T_fp += tau[i];
                 n_fp += 1;
                 if (E_current <= 0) { /* Check whether the trajectory reached zero */
+                    T_fp += E_current / simulation_parameters.alpha;
                     break;
                 }
             }
-            T_fp += E_current / simulation_parameters.alpha;
+
 
             if (n_fp == simulation_parameters.trajectory_length) {
                 if ( result_data.T_trust == -1
                     || result_data.T_trust > T_fp ){
                     result_data.T_trust = T_fp;
                 }
+                result_data.overshoot ++;
             }
 
             result_data.acc ++;
@@ -660,48 +662,46 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* if there were no overshoot we update the results */
-        if (n_fp < simulation_parameters.trajectory_length) {
-            /* update the result with the obtained values */
-            double observable = 0;
+        /* update the result with the obtained values */
+        double observable = 0;
 
-            if (simulation_parameters.observable=='n') {
-                observable = (double) n_fp;
-            }
-            if(simulation_parameters.observable=='T') {
-                observable = T_fp ;
-            }
-
-            /* update the mean values */
-            result_data.mean_n += n_fp
-                                / (double) simulation_parameters.n_steps;
-            result_data.mean_tau += T_fp
-                                / (double) simulation_parameters.n_steps;
-            /* update the variance */
-            /* NB! this is actually second moment, the shift is done later */
-            result_data.variance_n += n_fp * n_fp
-                                / (double) simulation_parameters.n_steps;
-
-            result_data.variance_tau += T_fp * T_fp
-                    / (double) simulation_parameters.n_steps;
-
-
-            /* compute the id of the bin in the histogram */
-            int bin_id = (int) floor( (observable - simulation_parameters.x_min)
-                                      / simulation_parameters.delta );
-            if(bin_id >= 0 && bin_id < simulation_parameters.n_bins) {
-                /* counts is increased by one */
-                result_data.hist_counts[bin_id] += 1;
-                /* in the weighted histogram we rescale the weight by a constant
-                 * to avoid numerical overflow */
-                double average_ln_w =  ln_w(result_data.bin_centers[bin_id],
-                                            result_data.bin_centers[bin_id],
-                                            &simulation_parameters);
-                double ln_w_current =  ln_w(n_fp, T_fp, &simulation_parameters);
-                result_data.hist_weighted[bin_id] += exp( - ln_w_current
-                                                          + average_ln_w);
-            }
+        if (simulation_parameters.observable=='n') {
+            observable = (double) n_fp;
         }
+        if(simulation_parameters.observable=='T') {
+            observable = T_fp ;
+        }
+
+        /* update the mean values */
+        result_data.mean_n += n_fp
+                            / (double) simulation_parameters.n_steps;
+        result_data.mean_tau += T_fp
+                            / (double) simulation_parameters.n_steps;
+        /* update the variance */
+        /* NB! this is actually second moment, the shift is done later */
+        result_data.variance_n += n_fp * n_fp
+                            / (double) simulation_parameters.n_steps;
+
+        result_data.variance_tau += T_fp * T_fp
+                / (double) simulation_parameters.n_steps;
+
+
+        /* compute the id of the bin in the histogram */
+        int bin_id = (int) floor( (observable - simulation_parameters.x_min)
+                                  / simulation_parameters.delta );
+        if(bin_id >= 0 && bin_id < simulation_parameters.n_bins) {
+            /* counts is increased by one */
+            result_data.hist_counts[bin_id] += 1;
+            /* in the weighted histogram we rescale the weight by a constant
+             * to avoid numerical overflow */
+            double average_ln_w =  ln_w(result_data.bin_centers[bin_id],
+                                        result_data.bin_centers[bin_id],
+                                        &simulation_parameters);
+            double ln_w_current =  ln_w(n_fp, T_fp, &simulation_parameters);
+            result_data.hist_weighted[bin_id] += exp( - ln_w_current
+                                                      + average_ln_w);
+        }
+
     }
 
     /* now we shift the value of the variance */
