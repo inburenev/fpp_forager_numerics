@@ -17,8 +17,8 @@
 /***      - Distribution of time intervals.                                 ***/
 /***      - Parameters for time interval distribution.                      ***/
 /***      - Distribution of replenishments.                                 ***/
-/***     - 'ic': Initial energy (E0).                                       ***/
-/***     - 'rate': Decay rate (alpha).                                      ***/
+/***     - 'ic': Initial position (X0).                                     ***/
+/***     - 'drift': Drift     (alpha).                                      ***/
 /***     - 'n_steps': Number of Metropolis steps.                           ***/
 /***     - 'traj_len': Maximum trajectory length.                           ***/
 /***     - 'r_traj': Jumps to change per Metropolis step.                   ***/
@@ -52,9 +52,8 @@ typedef struct parameters {
     /* the structure containing all the parameters for simulation */
 
     /* properties of the underlying process */
-    /* initial conditions */
     double alpha;               /* energy decay rate */
-    double E0;                  /* initial energy */
+    double X0;                  /* initial position */
 
     /* dynamics */
     /* time intervals */
@@ -135,10 +134,10 @@ int load_parameters(const char *filename,
 
         // Parsing key-value pairs
         if (strcmp(section, "model") == 0) {
-            if (strstr(line, "decay_rate") == line) {
-                sscanf(line, "decay_rate = %lf", &parameters->alpha);
-            } else if (strstr(line, "E0") == line) {
-                sscanf(line, "E0 = %lf", &parameters->E0);
+            if (strstr(line, "drift") == line) {
+                sscanf(line, "drift = %lf", &parameters->alpha);
+            } else if (strstr(line, "X0") == line) {
+                sscanf(line, "X0 = %lf", &parameters->X0);
             } else if (strstr(line, "trajectory_length") == line) {
                 sscanf(line, "trajectory_length = %d", &parameters->trajectory_length);
             } else if (strstr(line, "tau_distribution") == line) {
@@ -263,7 +262,7 @@ double generate_M(const Parameters *parameters)
     }
     /* uniform replenishment */
     if (strcmp(parameters->M_distribution, "uniform") == 0) {
-        return  generate_uniform(0, 1 / parameters->M_parameters[0]);
+        return  generate_uniform(0,  parameters->M_parameters[0]);
     }
     /* uniform replenishment */
     if (strcmp(parameters->M_distribution, "half_gaussian") == 0) {
@@ -287,7 +286,7 @@ double generate_tau(const Parameters *parameters)
     }
     /* uniform replenishment */
     if (strcmp(parameters->tau_distribution, "uniform") == 0) {
-        return  generate_uniform(0, 1 / parameters->tau_parameters[0]);
+        return  generate_uniform(0, parameters->tau_parameters[0]);
     }
     /* uniform replenishment */
     if (strcmp(parameters->tau_distribution, "half_gaussian") == 0) {
@@ -307,7 +306,7 @@ int compute_fp(int *n_fp, double *T_fp,
                const Parameters parameters,
                double const *M, double const *tau)
 {
-    double E_current = parameters.E0;
+    double E_current = parameters.X0;
 
     /* Initialize first passage properties */
     *T_fp = 0;
@@ -367,12 +366,12 @@ int initialize_simulation(const int argc, char *argv[],
     mkdir("metropolis_conf", S_IRWXU | S_IRWXG | S_IRWXO);
     sprintf(simulation_parameters->filename, /* file with trajectory */
             "metropolis_conf/"
-            "%s-%.2f-%s-%.2f-E0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
+            "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
             simulation_parameters->tau_distribution,
             simulation_parameters->tau_parameters[0],
             simulation_parameters->M_distribution,
             simulation_parameters->M_parameters[0],
-            simulation_parameters->E0,
+            simulation_parameters->X0,
             simulation_parameters->trajectory_length,
             simulation_parameters->theta_is,
             simulation_parameters->observable);
@@ -387,12 +386,12 @@ int initialize_result(const Parameters *simulation_parameters,
     mkdir("metropolis_data", S_IRWXU | S_IRWXG | S_IRWXO);
     sprintf(result_data->filename_data, /* file with final histograms */
                 "metropolis_data/"
-                "%s-%.2f-%s-%.2f-E0=%.3f-traj_len=%d-IS=%.4f-%c-hist",
+                "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-hist",
                 simulation_parameters->tau_distribution,
                 simulation_parameters->tau_parameters[0],
                 simulation_parameters->M_distribution,
                 simulation_parameters->M_parameters[0],
-                simulation_parameters->E0,
+                simulation_parameters->X0,
                 simulation_parameters->trajectory_length,
                 simulation_parameters->theta_is,
                 simulation_parameters->observable);
@@ -453,7 +452,7 @@ int save_results(const Parameters *simulation_parameters,
     FILE *fptr = fopen(result_data->filename_data, "w");
 
     /* metadata */
-    fprintf(fptr,"# E0: %f \n ",            simulation_parameters->E0);
+    fprintf(fptr,"# X0: %f \n ",            simulation_parameters->X0);
     fprintf(fptr,"# n_steps: %lld \n ",     simulation_parameters->n_steps);
     fprintf(fptr,"# acc: %lld \n ",         result_data->acc);
     fprintf(fptr,"# overshoot: %lld \n ",   result_data->overshoot);
@@ -466,7 +465,9 @@ int save_results(const Parameters *simulation_parameters,
     for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
         const double average_ln_w =  ln_w(result_data->bin_centers[bin_id],
                                           result_data->bin_centers[bin_id],
-                                          simulation_parameters);
+                                          simulation_parameters)
+                    + log(simulation_parameters->n_steps)
+                    + log(result_data->bin_centers[1]-result_data->bin_centers[0]);
         fprintf(fptr, "%f  %d  %f  %f  \n",
                 result_data->bin_centers[bin_id],
                 result_data->hist_counts[bin_id],
@@ -552,7 +553,7 @@ int main(int argc, char *argv[]) {
         if (simulation_parameters.n_changes == -1 ) {
             n_fp = 0;
             T_fp = 0;
-            double E_current = simulation_parameters.E0;
+            double E_current = simulation_parameters.X0;
             // n_changes = -1 create the new trajectory at each step
             for (int i=0; i < simulation_parameters.trajectory_length; i++) {
                 tau[i] = generate_tau(&simulation_parameters);
