@@ -87,7 +87,8 @@ typedef struct parameters {
 
 typedef struct result_data {
     /* results */
-    double mean, variance;      /* the mean and the variance of the data */
+    double mean_n, variance_n;      /* the mean and the variance of n */
+    double mean_tau, variance_tau;  /* the mean and the variance of tau */
     int *hist_counts;           /* number of samples in the bin */
     double *bin_centers;        /* centers of the bins */
     double *hist_weighted;      /* weighted histogram */
@@ -396,8 +397,10 @@ int initialize_result(const Parameters *simulation_parameters,
                 simulation_parameters->theta_is,
                 simulation_parameters->observable);
 
-    result_data->mean = 0;
-    result_data->variance = 0;
+    result_data->mean_n = 0;
+    result_data->variance_n = 0;
+    result_data->mean_tau = 0;
+    result_data->variance_tau = 0;
     result_data->T_trust = -1;
     result_data->acc = 0;
     result_data->overshoot = 0;
@@ -452,14 +455,16 @@ int save_results(const Parameters *simulation_parameters,
     FILE *fptr = fopen(result_data->filename_data, "w");
 
     /* metadata */
-    fprintf(fptr,"# X0: %f \n ",            simulation_parameters->X0);
-    fprintf(fptr,"# n_steps: %lld \n ",     simulation_parameters->n_steps);
-    fprintf(fptr,"# acc: %lld \n ",         result_data->acc);
-    fprintf(fptr,"# overshoot: %lld \n ",   result_data->overshoot);
-    fprintf(fptr,"# theta_is: %f \n ",      simulation_parameters->theta_is);
-    fprintf(fptr,"# observable: %c \n ",    simulation_parameters->observable);
-    fprintf(fptr,"# mean: %f \n ",          result_data->mean);
-    fprintf(fptr,"# variance: %f \n ",      result_data->variance);
+    fprintf(fptr,"# X0: %f \n",            simulation_parameters->X0);
+    fprintf(fptr,"# n_steps: %lld \n",     simulation_parameters->n_steps);
+    fprintf(fptr,"# acc: %lld \n",         result_data->acc);
+    fprintf(fptr,"# overshoot: %lld \n",   result_data->overshoot);
+    fprintf(fptr,"# theta_is: %f \n",      simulation_parameters->theta_is);
+    fprintf(fptr,"# observable: %c \n",    simulation_parameters->observable);
+    fprintf(fptr,"# mean_n: %f \n",        result_data->mean_n);
+    fprintf(fptr,"# variance_n: %f \n",    result_data->variance_n);
+    fprintf(fptr,"# mean_tau: %f \n",      result_data->mean_tau);
+    fprintf(fptr,"# variance_tau: %f \n",  result_data->variance_tau);
 
     /* histograms */
     for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
@@ -658,13 +663,19 @@ int main(int argc, char *argv[]) {
                 observable = T_fp ;
             }
 
-            /* update the mean and the variance */
-            result_data.mean += observable
+            /* update the mean values */
+            result_data.mean_n += n_fp
                                 / (double) simulation_parameters.n_steps;
-            /* at the moment this is not the variance but the mean of the square
-             * we will subtract the square of the mean later */
-            result_data.variance += observable * observable
+            result_data.mean_tau += T_fp
                                 / (double) simulation_parameters.n_steps;
+            /* update the variance */
+            /* NB! this is actually second moment, the shift is done later */
+            result_data.variance_n += n_fp * n_fp
+                                / (double) simulation_parameters.n_steps;
+
+            result_data.variance_tau += T_fp * T_fp
+                    / (double) simulation_parameters.n_steps;
+
 
             /* compute the id of the bin in the histogram */
             int bin_id = (int) floor( (observable - simulation_parameters.x_min)
@@ -685,8 +696,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* now we shift the value of the variance */
-    result_data.variance = result_data.variance
-                            - result_data.mean * result_data.mean;
+    result_data.variance_n = result_data.variance_n
+                            - result_data.mean_n * result_data.mean_n;
+    result_data.variance_tau = result_data.variance_tau
+                            - result_data.mean_tau * result_data.mean_tau;
     printf("\n"); /* for the progress bar to stop */
 
 
@@ -702,9 +715,6 @@ int main(int argc, char *argv[]) {
 
     printf("acceptance rate: %.2f\n",
             (double) result_data.acc
-                / (double) simulation_parameters.n_steps);
-    printf("overshoot rate: %.2f\n",
-            (double) result_data.overshoot
                 / (double) simulation_parameters.n_steps);
 
     printf("output saved in: %s", result_data.filename_data);
