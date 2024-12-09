@@ -465,6 +465,7 @@ int save_results(const Parameters *simulation_parameters,
     fprintf(fptr,"# variance_n: %f \n",    result_data->variance_n);
     fprintf(fptr,"# mean_tau: %f \n",      result_data->mean_tau);
     fprintf(fptr,"# variance_tau: %f \n",  result_data->variance_tau);
+    fprintf(fptr,"# T_trust: %f \n",       result_data->T_trust);
 
     /* histograms */
     for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
@@ -567,10 +568,18 @@ int main(int argc, char *argv[]) {
                 T_fp += tau[i];
                 n_fp += 1;
                 if (E_current <= 0) { /* Check whether the trajectory reached zero */
-                    T_fp += E_current / simulation_parameters.alpha;
                     break;
                 }
             }
+            T_fp += E_current / simulation_parameters.alpha;
+
+            if (n_fp == simulation_parameters.trajectory_length) {
+                if ( result_data.T_trust == -1
+                    || result_data.T_trust > T_fp ){
+                    result_data.T_trust = T_fp;
+                }
+            }
+
             result_data.acc ++;
         } else {
             /* store old first passage properties */
