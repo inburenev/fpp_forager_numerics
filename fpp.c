@@ -52,7 +52,7 @@ typedef struct parameters {
     /* the structure containing all the parameters for simulation */
 
     /* properties of the underlying process */
-    double alpha;               /* energy decay rate */
+    double alpha;               /* drift velocity */
     double X0;                  /* initial position */
 
     /* dynamics */
@@ -71,7 +71,7 @@ typedef struct parameters {
     char observable;            /* quantity of interest, 'T' or 'n'
                                    T -- lifetime of the particle
                                    n -- number of jumps before death */
-    char tilt_type[10];         /* type of the tilt in IS scheme */
+    char tilt_type[100];        /* type of the tilt in IS scheme */
     double theta_is;            /* importance sampling quasi temperature */
     long long n_steps;          /* number of steps in metropolis simulation */
     int n_changes;              /* number of jumps to change per step */
@@ -101,8 +101,10 @@ typedef struct result_data {
 } Result_data;
 
 typedef struct trajectory {
-    double *tau, *M;            /* time intervals and replenishments */
-    double n_fp, T_fp;          /* first passage properties */
+    double *waiting_times;      /* waiting times */
+    double *jumps;              /* jumps */
+    double T_fp;                /* first passage time */
+    int n_fp;                   /* number of jumps before death */
 } Trajectory;
 
 
@@ -430,23 +432,40 @@ int initialize_result(const Parameters *simulation_parameters,
     return 0;
 }
 
-int initialize_trajectory(double *tau, double *M,
-                          const Parameters *simulation_parameters) {
-    /* load or create the trajectory */
+int initialize_trajectory(Trajectory trajectory,
+                            const Parameters *simulation_parameters) {
+    /* allocate the memory */
+    trajectory.waiting_times = (double *)
+        malloc( simulation_parameters->trajectory_length * sizeof(double) );
+    trajectory.jumps = (double *)
+        malloc( simulation_parameters->trajectory_length * sizeof(double) );
+
+    /* load the trajectory from the file or generate it from scratch */
     FILE *fptr = fopen(simulation_parameters->filename, "r");
     if (fptr == NULL) {
         for (int i=0; i < simulation_parameters->trajectory_length; i++) {
-            tau[i] = generate_tau(simulation_parameters);
-            M[i] = generate_M(simulation_parameters);
+            trajectory.waiting_times[i] = generate_tau(simulation_parameters);
+            trajectory.jumps[i] = generate_M(simulation_parameters);
         }
     } else {
         for (int i =0; i < simulation_parameters->trajectory_length; i++) {
-            fscanf(fptr,"%lf %lf", &M[i], &tau[i]);
+            fscanf(fptr, "%lf %lf",
+                          &trajectory.jumps[i], &trajectory.waiting_times[i]);
         }
         fclose(fptr);
     }
+    /* compute first passage properties */
+    compute_fp(&trajectory.n_fp, &trajectory.T_fp,
+        *simulation_parameters, trajectory.jumps,trajectory.waiting_times);
     return 1;
 }
+
+int free_trajectory(Trajectory trajectory) {
+    free(trajectory.waiting_times);
+    free(trajectory.jumps);
+    return 1;
+}
+
 
 
 int save_results(const Parameters *simulation_parameters,
@@ -486,13 +505,13 @@ int save_results(const Parameters *simulation_parameters,
 }
 
 
+
 int main(int argc, char *argv[]) {
 
     /**************************************************************************/
     /************************ Initialization Routine **************************/
     /**************************************************************************/
 
-    double *M, *tau;
     double T_fp = 0;
     int n_fp = 0;
     int passage_happens = 1;            /* 1 does happen, -1 does not happen  */
@@ -506,14 +525,9 @@ int main(int argc, char *argv[]) {
     }
     initialize_result(&simulation_parameters, &result_data);
 
+    Trajectory trajectory;
+    initialize_trajectory(trajectory, &simulation_parameters);
 
-    tau = (double *) malloc( simulation_parameters.trajectory_length
-                            * sizeof(double) );
-    M = (double *) malloc( simulation_parameters.trajectory_length
-                            * sizeof(double) );
-    initialize_trajectory(tau, M, &simulation_parameters);
-
-    passage_happens = compute_fp(&n_fp, &T_fp, simulation_parameters, M,tau );
 
 
 
@@ -562,10 +576,10 @@ int main(int argc, char *argv[]) {
             double E_current = simulation_parameters.X0;
             // n_changes = -1 create the new trajectory at each step
             for (int i=0; i < simulation_parameters.trajectory_length; i++) {
-                tau[i] = generate_tau(&simulation_parameters);
-                M[i] = generate_M(&simulation_parameters);
-                E_current += M[i] - simulation_parameters.alpha * tau[i];
-                T_fp += tau[i];
+                trajectory.waiting_times[i] = generate_tau(&simulation_parameters);
+                trajectory.jumps[i] = generate_M(&simulation_parameters);
+                E_current += trajectory.jumps[i] - simulation_parameters.alpha * trajectory.waiting_times[i];
+                T_fp += trajectory.waiting_times[i];
                 n_fp += 1;
                 if (E_current <= 0) { /* Check whether the trajectory reached zero */
                     T_fp += E_current / simulation_parameters.alpha;
@@ -596,12 +610,12 @@ int main(int argc, char *argv[]) {
                                        % simulation_parameters.trajectory_length;
 
                 /* store old jumps */
-                tau_old[i] = tau[indices_to_change[i]];
-                M_old[i] = M[indices_to_change[i]];
+                tau_old[i] = trajectory.waiting_times[indices_to_change[i]];
+                M_old[i] = trajectory.jumps[indices_to_change[i]];
 
                 /* generate new jumps */
-                tau[indices_to_change[i]] = generate_tau(&simulation_parameters);
-                M[indices_to_change[i]] = generate_M(&simulation_parameters);
+                trajectory.waiting_times[indices_to_change[i]] = generate_tau(&simulation_parameters);
+                trajectory.jumps[indices_to_change[i]] = generate_M(&simulation_parameters);
 
                 /* update the minimum index of the jump if necessary*/
                 if (indices_to_change[i] < min_jump_index) {
@@ -620,7 +634,7 @@ int main(int argc, char *argv[]) {
                  * trajectory has reached zero, so we need to update
                  * the first passage properties */
                 double pAcc = 1;
-                if(compute_fp(&n_fp, &T_fp, simulation_parameters, M,tau ) == -1 ) {
+                if(compute_fp(&n_fp, &T_fp, simulation_parameters, trajectory.jumps,trajectory.waiting_times ) == -1 ) {
                     /* NB when we call compute_fp, n_fp and T_fp are updated */
                     /* if there is no first passage */
                     result_data.overshoot ++;
@@ -650,8 +664,8 @@ int main(int argc, char *argv[]) {
                     for(int i = simulation_parameters.n_changes - 1; i >=0; i--) {
                         /* NB as the indices may repeat, the loop should iterate in
                          * the opposite direction to revert the changes properly. */
-                        tau[indices_to_change[i]] = tau_old[i];
-                        M[indices_to_change[i]] = M_old[i];
+                        trajectory.waiting_times[indices_to_change[i]] = tau_old[i];
+                        trajectory.jumps[indices_to_change[i]] = M_old[i];
                     }
 
                     /* restore first passage properties to its original values */
@@ -734,19 +748,20 @@ int main(int argc, char *argv[]) {
     /* trajectory */
     FILE *fptr = fopen(simulation_parameters.filename, "w");
     for (int i =0; i<simulation_parameters.trajectory_length; i++) {
-        fprintf(fptr, "%f %f \n", M[i], tau[i]);
+        fprintf(fptr, "%f %f \n", trajectory.jumps[i], trajectory.waiting_times[i]);
     }
     fclose(fptr);
 
     /* free all dynamically allocated memory to avoid leaks */
-    free(tau);
-    free(M);
+    free_trajectory(trajectory);
+
     free(result_data.bin_centers);
     free(result_data.hist_counts);
     free(result_data.hist_weighted);
     free(indices_to_change);
     free(M_old);
     free(tau_old);
+
 
     return 0;
 }
