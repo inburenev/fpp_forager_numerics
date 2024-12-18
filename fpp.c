@@ -69,6 +69,9 @@ typedef struct parameters {
 
     /* properties of the Metropolis algorithm */
     int trajectory_length;      /* maximum length of the trajectory */
+    char filename[100];         /* name of the file where the last
+                                trajectory is stored */
+
     char observable;            /* quantity of interest, 'T' or 'n'
                                    T -- lifetime of the particle
                                    n -- number of jumps before death */
@@ -76,8 +79,6 @@ typedef struct parameters {
     double theta_is;            /* importance sampling quasi temperature */
     long long n_steps;          /* number of steps in metropolis simulation */
     int n_changes;              /* number of jumps to change per step */
-    char filename[100];         /* name of the file where the last
-                                    trajectory is stored */
 
     /* parameters of the output */
     double x_min, x_max;        /* endpoints of the histogram */
@@ -114,163 +115,12 @@ typedef struct trajectory {
 
 
 
-/******************************************************************************
- *  @brief Routine loading the parameters from the configuration file.
- *
- *  This function reads a configuration file line by line, parsing and
- *  assigning values to the `parameters` structure based on section headers
- *  and key-value pairs. It supports three configuration sections
- *  (`[model]`, `[simulation]`, and `[result]`).
- *
- *  The function handles the following sections and their keys:
- *  - **[model]**
- *    - `drift`: Sets the drift velocity (`alpha`).
- *    - `X0`: Sets the initial position.
- *    - `trajectory_length`: Defines the maximum trajectory length.
- *    - `t_distribution`: Specifies the time interval distribution type and
- *      its associated parameter.
- *    - `M_distribution`: Specifies the energy replenishment distribution
- *      type and its associated parameter.
- *  - **[simulation]**
- *    - `n_changes`: Defines the number of trajectory changes per Metropolis
- *      step.
- *    - `importance_sampling`: Specifies the importance sampling type and
- *      its parameter.
- *    - `n_steps`: Sets the total number of Metropolis steps.
- *  - **[result]**
- *    - `observable`: Specifies the quantity to observe (`T` or `n`).
- *    - `hist_min`, `hist_max`: Define the histogram range.
- *    - `n_bins`: Specifies the number of histogram bins.
- *
- *  @param [in] filename
- *      Path to the configuration file.
- *  @param [out] parameters
- *      Pointer to the `Parameters` structure that will be populated with
- *      the parsed values from the configuration file.
- *
- *  @return int
- *      - `0` if the configuration was loaded successfully.
- *      - `-1` if an error occurred (e.g., file could not be opened or invalid
- *        configuration values were detected).
- *
- *  @details
- *  - The function skips empty lines and comments (lines starting with `#`).
- *  - Section headers are enclosed in square brackets (e.g., `[model]`).
- *  - Key-value pairs are parsed and validated. Unknown keys or invalid values
- *    will result in an error and terminate the parsing process.
- *  - For distribution types, only predefined options (`exponential`,
- *    `half_gaussian`, `fixed`, `uniform`) are accepted.
- *
- *  @note
- *  - Errors are reported to `stderr` using `perror` and `fprintf`.
- *****************************************************************************/
-int load_parameters(const char *filename,
-                    Parameters *parameters) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("Could not open configuration file");
-        return -1;
-    }
 
-    char line[MAX_LINE_LENGTH];
-    char section[MAX_LINE_LENGTH] = "";
 
-    while (fgets(line, sizeof(line), file)) {
-        /* Remove newline characters */
-        line[strcspn(line, "\n")] = 0;
 
-        /* Skip empty lines and comments */
-        if (line[0] == '#' || strlen(line) == 0) continue;
-
-        /* Detect section headers */
-        if (line[0] == '[') {
-            sscanf(line, "[%[^]]", section);
-            continue;
-        }
-
-        /* Parsing key-value pairs */
-        if (strcmp(section, "model") == 0) {
-            if (strstr(line, "drift") == line) {
-                sscanf(line, "drift = %lf", &parameters->alpha);
-            } else if (strstr(line, "X0") == line) {
-                sscanf(line, "X0 = %lf", &parameters->X0);
-            } else if (strstr(line, "trajectory_length") == line) {
-                sscanf(line, "trajectory_length = %d", &parameters->trajectory_length);
-            } else if (strstr(line, "t_distribution") == line) {
-                // note that sscanf breaks on the space
-                sscanf(line, "t_distribution = %s", parameters->t_distribution);
-                if (strcmp(parameters->t_distribution, "exponential") == 0 ||
-                    strcmp(parameters->t_distribution, "half_gaussian") == 0 ||
-                    strcmp(parameters->t_distribution, "fixed") == 0 ||
-                    strcmp(parameters->t_distribution, "uniform") == 0) {
-                    // all four distributions have one parameter
-                    parameters->tau_n_parameters = 1;
-
-                    char param_str[MAX_LINE_LENGTH];
-                    sscanf(line, "t_distribution = %*s [%[^]]", param_str);
-                    parameters->t_parameters[0] = atof(param_str);
-
-                    } else {
-                        fprintf(stderr, "Error: Unknown t_distribution %s\n",
-                                         parameters->t_distribution);
-                        fclose(file);
-                        return -1;
-                    }
-            } else if (strstr(line, "M_distribution") == line) {
-                sscanf(line, "M_distribution = %s", parameters->M_distribution);
-                if (strcmp(parameters->M_distribution, "exponential") == 0 ||
-                    strcmp(parameters->M_distribution, "half_gaussian") == 0 ||
-                    strcmp(parameters->M_distribution, "fixed") == 0 ||
-                    strcmp(parameters->M_distribution, "uniform") == 0) {
-
-                    parameters->M_n_parameters = 1;
-                    char param_str[MAX_LINE_LENGTH];
-                    sscanf(line, "M_distribution = %*s [%[^]]", param_str);
-                    parameters->M_parameters[0] = atof(param_str);
-                    } else {
-                        fprintf(stderr, "Error: Unknown M_distribution %s\n",
-                                parameters->M_distribution);
-                        fclose(file);
-                        return -1;
-                    }
-            }
-        } else if (strcmp(section, "simulation") == 0) {
-            if (strstr(line, "n_changes") == line) {
-                sscanf(line, "n_changes = %d", &parameters->n_changes);
-            } else if (strstr(line, "importance_sampling") == line) {
-                sscanf(line, "importance_sampling = %s", parameters->tilt_type);
-
-                if (strcmp(parameters->tilt_type, "exponential") == 0) {
-                    char param_str[MAX_LINE_LENGTH];
-                    sscanf(line, "importance_sampling = %*s [%[^]]", param_str);
-                    parameters->theta_is = atof(param_str);
-                } else if (strcmp(parameters->tilt_type, "none") == 0) {
-                    parameters->theta_is = 0;
-                } else {
-                    fprintf(stderr, "Error: Unknown importance_sampling type %s\n",
-                            parameters->tilt_type);
-                    fclose(file);
-                    return -1;
-                }
-            } else if (strstr(line, "n_steps") == line) {
-                sscanf(line, "n_steps = %lld", &parameters->n_steps);
-            }
-        } else if (strcmp(section, "result") == 0) {
-            if (strstr(line, "observable") == line) {
-                sscanf(line, "observable = %c", &parameters->observable);
-            } else if (strstr(line, "hist_min") == line) {
-                sscanf(line, "hist_min = %lf", &parameters->x_min);
-            } else if (strstr(line, "hist_max") == line) {
-                sscanf(line, "hist_max = %lf", &parameters->x_max);
-            } else if (strstr(line, "n_bins") == line) {
-                sscanf(line, "n_bins = %d", &parameters->n_bins);
-            }
-        }
-    }
-
-    fclose(file);
-    return 0;
-}
+/**************************************************************************/
+/******************** Computation  routines      **************************/
+/**************************************************************************/
 
 
 
@@ -515,53 +365,551 @@ double generate_t(const Parameters *parameters)
 }
 
 
+/******************************************************************************
+ * @brief Compute the first-passage properties for the given realization
+ * of the  process.
+ *
+ * This function determines when the process first reaches or crosses
+ * the origin. The first-passage properties are stored in the `Trajectory`
+ * structure fields `T_fp` (first-passage time)
+ * and `n_fp` (number of jumps before the first passage occurs).
+ *
+ * @param [in/out] trajectory
+ *      A `Trajectory` structure that holds:
+ *      - `jumps`: Array of jump values at each step of the trajectory.
+ *      - `waiting_times`: Array of waiting times between jumps.
+ *      - `T_fp`: Updated to store the first-passage time or the total time of
+ *        the process if no first-passage occurs.
+ *      - `n_fp`: Updated to store the number of jumps until the first-passage
+ *        event or the total number of steps if no first-passage occurs.
+ * @param [in] parameters
+ *      The simulation parameters. The relevant parameters are:
+ *      - `X0`: The initial coordinate of the process.
+ *      - `alpha`: Drift velocity.
+ *      - `trajectory_length`: The maximum trajectory length.
+ *
+ * @return int
+ *      - `1` if the first-passage event occurs:
+ *        - `T_fp` the time up to the first-passage event.
+ *        - `n_fp` the number of the last jump where the process is positive
+ *      - `-1` if no first-passage event occurs:
+ *        - `T_fp` contains the total time of the trajectory.
+ *        - `n_fp` contains the total number of steps in the trajectory.
+ *      - `-2` if the pointers to the trajectory are NULL
+ *
+ * @details
+ * - The particle's position is updated iteratively at each step as:
+ *
+ *        X_current += jumps[i] - alpha * waiting_times[i]
+ *
+ * - The first passage properties are computed by
+ *
+ *        T_fp += waiting_times[i]
+ *        n_fp += 1
+ *
+ * - The first-passage event is detected when `X_current` becomes less than or
+ *   equal to zero. At this step, the time is adjusted by subtracting
+ *   the time the process has spent in the negative part, as
+ *
+ *        T_fp += X_current / alpha
+ *
+ *   Recall that 'X_current' < 0.
+ * - If no first-passage event occurs, the function returns the total time and
+ *   total number of steps in the trajectory.
+ *
+ * @note
+ * - In our model `n_fp > 0`.
+ *****************************************************************************/
+int find_first_passage(Trajectory trajectory, const Parameters parameters) {
 
-/*** compute first passage properties                                       ***/
-/*** the results are stored in T_fp and n_fp                                ***/
-/*** return: 1 -- first passage happens                                     ***/
-/***            T_fp -- lifetime;    n_fp -- last jump with positive energy ***/
-/***        -1 -- no first passage                                          ***/
-/***            T_fp -- total time of the process;  n_fp -- length of the trajectory    ***/
-/*** NB: n_fp > 0 (the definition of the model)                             ***/
-int compute_fp(int *n_fp, double *T_fp,
-               const Parameters parameters,
-               double const *M, double const *tau)
-{
-    double X_current = parameters.X0;
-
-    /* Initialize first passage properties */
-    *T_fp = 0;
-    *n_fp = 0;
-
-    /* Check when the trajectory reaches zero */
-    for (int i = 0; i < parameters.trajectory_length; i++) {
-        X_current += M[i] - parameters.alpha * tau[i];
-        *T_fp += tau[i];
-        *n_fp += 1;
-        if (X_current <= 0) { /* Check whether the trajectory reached zero */
-            *T_fp += X_current / parameters.alpha;
-            return 1;
-        }
+    /* Null pointer checks */
+    if (trajectory.jumps == NULL || trajectory.waiting_times == NULL) {
+        fprintf(stderr, "Error: Null pointer detected in trajectory.\n");
+        return -2;
     }
 
+    /* Compute first passage properties */
+    double X_current = parameters.X0;
+    trajectory.T_fp = 0;
+    trajectory.n_fp = 0;
+    for (int i = 0; i < parameters.trajectory_length; i++) {
+            X_current += trajectory.jumps[i] - parameters.alpha * trajectory.waiting_times[i];
+            trajectory.T_fp += trajectory.waiting_times[i];
+            trajectory.n_fp += 1;
+            if (X_current <= 0) { /* Check whether the trajectory reached zero */
+                trajectory.T_fp += X_current / parameters.alpha;
+                return 1;
+            }
+        }
     return -1;
 }
 
-/*** log of the likelihood ratio P(T,n) / Q(T,n)                            ***/
-/***    P(T,n) -- original distribution                                     ***/
-/***    Q(T,n) -- biased distribution used in importance sampling           ***/
-/*** the biased distribution is specified in simulation parameters          ***/
-double ln_w(const int n_fp, const double T_fp,
-            const Parameters *simulation_parameters) {
-    switch (simulation_parameters->observable) {
-        default:
-            return 0;
-        case 'n':
-            return simulation_parameters->theta_is * (double) n_fp;
-        case 'T':
-            return simulation_parameters->theta_is * T_fp;
+
+
+
+/******************************************************************************
+ * @brief Compute the log of the likelihood ratio $\ln \frac{P(T, n)}{Q(T, n)}$.
+ *
+ * This function calculates the logarithm of the likelihood ratio between the
+ * original distribution $P(T, n)$ and the biased distribution $Q(T, n)$ used
+ * in importance sampling. The specific type of biased distribution is
+ * determined by the `tilt_type` and `observable` fields in the simulation
+ * parameters.
+ *
+ * @param [in] n_fp
+ *      The number of jumps before the first-passage event (`n`).
+ * @param [in] T_fp
+ *      The first-passage time (`T`).
+ * @param [in] simulation_parameters
+ *      Pointer to the `Parameters` structure containing:
+ *      - `observable`: Specifies the observable used in the importance
+ *        sampling:
+ *          - `'n'`: Use the number of jumps (`n`).
+ *          - `'T'`: Use the first-passage time (`T`).
+ *      - `tilt_type`: Specifies the type of importance sampling tilt scheme:
+ *          - `"none"`: No tilt (returns 0).
+ *          - `"exponential"`: Applies an exponential tilt based on the
+ *            observable.
+ *      - `theta_is`: Importance sampling bias parameter used for exponential
+ *        tilt.
+ *
+ * @return double
+ *      The logarithm of the likelihood ratio:
+ *      - For `"none"` tilt: Returns `0`.
+ *      - For `"exponential"` tilt:
+ *          - If `observable == 'n'`: Returns $\theta \cdot n$.
+ *          - If `observable == 'T'`: Returns $\theta \cdot T$.
+ *      - For unknown tilt types or observables: Logs an error message to
+ *        `stderr` and returns `0`.
+ *
+ * @details
+ * - **No tilt (`tilt_type == "none"`)**:
+ *
+ *        ln_w = 0
+ *
+ * - **Exponential tilt (`tilt_type == "exponential"`)**:
+ *   - For observable `'n'`:
+ *
+ *        ln_w = theta_is * n_fp
+ *
+ *   - For observable `'T'`:
+ *
+ *        ln_w = theta_is * T_fp
+ *
+ * - If the tilt type is unsupported, the function logs an error and returns `0`.
+ *
+ *****************************************************************************/
+double log_likelihood_ratio(const int n_fp, const double T_fp,
+                const Parameters *simulation_parameters) {
+    /* no importance sampling distribution */
+    if (strcmp(simulation_parameters->tilt_type, "none") == 0) {
+        return 0;
     }
+    /* exponential tilt in the observable */
+    if (strcmp(simulation_parameters->tilt_type, "exponential") == 0) {
+        switch (simulation_parameters->observable) {
+            default:
+                return 0;
+            case 'n':
+                return simulation_parameters->theta_is * (double) n_fp;
+            case 'T':
+                return simulation_parameters->theta_is * T_fp;
+        }
+    }
+    /* unknown tilt */
+    fprintf(stderr, "Error: unknown type of the tilt.\n");
+    return 0;
 }
+
+/******************************************************************************
+ * @brief Generate a trajectory from scratch for a particle.
+ *
+ * This function creates a trajectory with specified simulation parameters.
+ * It generates waiting times and jumps for each step and tracks first-passage
+ * properties (if applicable). The trajectory generation can terminate upon
+ * the first-passage.
+ *
+ * @param [in/out] trajectory
+ *      A `Trajectory` structure to hold the generated trajectory:
+ *      - `waiting_times`: Array to store waiting times for each step.
+ *      - `jumps`: Array to store jump values for each step.
+ *      - `T_fp`: Updated to store the first-passage time or the total time
+ *        of the trajectory.
+ *      - `n_fp`: Updated to store the number of jumps before the first-passage
+ *        event or the total number of steps in the trajectory.
+ * @param [in] parameters
+ *      A `Parameters` structure. The relevant fields are
+ *      - `X0`: The initial position of the particle.
+ *      - `alpha`: Drift parameter affecting the particle's motion.
+ *      - `trajectory_length`: Maximum number of steps in the trajectory.
+ * @param [in] stop_on_first_passage
+ *      A boolean flag to indicate whether the trajectory generation should
+ *      stop as soon as the first-passage event occurs.
+ *      - `true`: Stop generating the trajectory upon reaching the first passage.
+ *      - `false`: Generate the full trajectory
+ *
+ * @return int
+ *      - `1`: If the trajectory is successfully generated.
+ *      - `-2`: If a null pointer is passed for `waiting_times` or `jumps`.
+ *
+ * @note
+ * - The `trajectory` structure must have preallocated memory for the arrays
+ *   `waiting_times` and `jumps` with size at least `trajectory_length`.
+ *****************************************************************************/
+int generate_trajectory_from_scratch(Trajectory trajectory,
+                                    const Parameters parameters,
+                                    const bool stop_on_first_passage) {
+    if (!trajectory.waiting_times || !trajectory.jumps) {
+        fprintf(stderr, "Error: Null pointer passed.\n");
+        return -2;
+    }
+
+    trajectory.n_fp = 0;
+    trajectory.T_fp = 0;
+    double X_current = parameters.X0;
+    bool first_passage_happened = false;
+
+    for (int i=0; i < parameters.trajectory_length; i++) {
+        trajectory.waiting_times[i] = generate_t(&parameters);
+        trajectory.jumps[i] = generate_M(&parameters);
+
+        if (!first_passage_happened) {
+            X_current += trajectory.jumps[i] - parameters.alpha * trajectory.waiting_times[i];
+
+            trajectory.T_fp += trajectory.waiting_times[i];
+            trajectory.n_fp += 1;
+
+            if (X_current <= 0) {
+                trajectory.T_fp += X_current / parameters.alpha;
+                first_passage_happened = true;
+                /* first passage terminates generation */
+                if (stop_on_first_passage) {
+                    break;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+/******************************************************************************
+ * @brief Perform a single Metropolis step to update a particle's trajectory.
+ *
+ * This function implements a single step of the Metropolis algorithm to
+ * update the particle's trajectory. The update may involve either generating
+ * the entire trajectory from scratch or modifying a subset of the trajectory
+ * based on simulation parameters. The function calculates the acceptance
+ * probability for the proposed changes and either accepts or reverts them.
+ *
+ * @param [in/out] trajectory
+ *      A `Trajectory` structure that holds:
+ *      - `waiting_times`: Array of waiting times between trajectory steps.
+ *      - `jumps`: Array of jumps at each step.
+ *      - `T_fp`: First-passage time (updated in-place).
+ *      - `n_fp`: Number of jumps before the first passage (updated in-place).
+ * @param [in] simulation_parameters
+ *      A `Parameters` structure containing simulation settings:
+ *      - `n_changes`: Number of trajectory elements to change. If `-1`, the
+ *        entire trajectory is regenerated from scratch.
+ *      - `trajectory_length`: Maximum length of the trajectory.
+ *      - `alpha`: Drift parameter affecting the particle's motion.
+ *      - `theta_is`: Importance sampling bias parameter.
+ * @param [in/out] indices_to_change
+ *      Preallocated array to store the indices of trajectory elements that
+ *      are modified during the step.
+ * @param [in/out] t_old
+ *      Preallocated array to store the original waiting times of modified
+ *      trajectory elements.
+ * @param [in/out] M_old
+ *      Preallocated array to store the original jump values of modified
+ *      trajectory elements.
+ *
+ * @return int
+ *      - `1`: If the proposed changes to the trajectory are accepted.
+ *      - `0`: If the proposed changes are rejected and the trajectory is
+ *        reverted to its original state.
+ *      - `-1`: If an "overshoot" occurs (no first passage is found and
+ *        importance sampling is active).
+ *
+ * @details
+ * - **Case 1**: Full Trajectory from Scratch (`n_changes == -1`):
+ *   - The function resets the trajectory and generates new waiting times
+ *     and jumps until the particle reaches the target or completes the
+ *     maximum trajectory length.
+ *   - First-passage properties (`T_fp` and `n_fp`) are computed on the fly.
+ *   - This case always accepts the new trajectory (`step_accepted = 1`).
+ *
+ * - **Case 2**: Partial Trajectory Update (`n_changes > 0`):
+ *   - The function selects a subset of trajectory elements to modify,
+ *     backed up in `t_old` and `M_old`.
+ *   - New waiting times and jumps are proposed for the selected indices.
+ *   - If the changes affect steps before the first passage, the acceptance
+ *     probability is computed using the importance sampling likelihood ratio.
+ *   - Proposed changes are either accepted or rejected based on the
+ *     calculated acceptance probability.
+ *   - If rejected, the trajectory is reverted to its original state using
+ *     the backed-up values.
+ *
+ * @note
+ * - Proper memory allocation and de-allocation for `indices_to_change`,
+ *   `t_old`, and `M_old` is done outside of this function
+ *****************************************************************************/
+int metropolis_step(Trajectory trajectory,
+                    const Parameters  simulation_parameters,
+                    int *indices_to_change, double *t_old, double *M_old
+    ){
+
+    if (!indices_to_change || !t_old || !M_old) {
+        fprintf(stderr, "Error: Null pointer passed.\n");
+        return -2;
+    }
+
+    int step_accepted = 0;
+    if (simulation_parameters.n_changes == -1 ) {
+        generate_trajectory_from_scratch(trajectory, simulation_parameters, true);
+        step_accepted = 1;
+    }
+
+    bool overshoot = false; // flag to keep track of the overshooting in the importance sampling scheme
+    if (simulation_parameters.n_changes > 0 ){
+        const double T_fp_old = trajectory.T_fp;
+        const int n_fp_old = trajectory.n_fp;
+
+
+        int min_jump_index = simulation_parameters.trajectory_length;
+
+
+        /* generate new steps  */
+        for(int i = 0; i < simulation_parameters.n_changes; i++) {
+            /* pick a random index [0, trajectory_length) */
+            indices_to_change[i] = rand()
+                                   % simulation_parameters.trajectory_length;
+
+            /* store old jumps */
+            t_old[i] = trajectory.waiting_times[indices_to_change[i]];
+            M_old[i] = trajectory.jumps[indices_to_change[i]];
+
+            /* generate new jumps */
+            trajectory.waiting_times[indices_to_change[i]] = generate_t(&simulation_parameters);
+            trajectory.jumps[indices_to_change[i]] = generate_M(&simulation_parameters);
+
+            /* update the minimum index of the jump if necessary*/
+            if (indices_to_change[i] < min_jump_index) {
+                min_jump_index = indices_to_change[i];
+            }
+        }
+
+        double pAcc = 1;
+
+        /* if all updates happened after the trajectory reached zero,
+         * then the first passage properties remain the same
+         * and hence the Metropolis move is always accepted
+         * else we need to compute the acceptance probability */
+        if (min_jump_index <= n_fp_old) {
+            const int first_passage = find_first_passage(trajectory, simulation_parameters);
+            // int first_passage = compute_fp(&trajectory.n_fp, &trajectory.T_fp,
+            //                                 simulation_parameters,
+            //                                 trajectory.jumps,trajectory.waiting_times);
+
+            /* if there is no first passage then in the importance sampling the proposed move is always rejected */
+            if ((first_passage == -1) && (simulation_parameters.theta_is != 0)) {
+                pAcc = 0;
+                overshoot = true;
+            } else {
+                pAcc *= exp( log_likelihood_ratio(trajectory.n_fp, trajectory.T_fp, &simulation_parameters)
+                            - log_likelihood_ratio(n_fp_old, T_fp_old, &simulation_parameters) );
+            }
+
+            /* accept/reject step */
+            if( rand() / (RAND_MAX + 1.0) < pAcc ){
+                step_accepted = 1;
+            } else {
+                /* the new trajectory is rejected
+                                 * and the changes should be reverted */
+                step_accepted = 0;
+                for(int i = simulation_parameters.n_changes - 1; i >=0; i--) {
+                    /* NB as the indices may repeat, the loop should iterate in
+                     * the opposite direction to revert the changes properly. */
+                    trajectory.waiting_times[indices_to_change[i]] = t_old[i];
+                    trajectory.jumps[indices_to_change[i]] = M_old[i];
+                }
+
+                /* restore first passage properties to its original values */
+                trajectory.T_fp = T_fp_old;
+                trajectory.n_fp = n_fp_old;
+            }
+        }
+    }
+
+    if (overshoot) { return -1; }
+    return step_accepted;
+}
+
+
+/**************************************************************************/
+/******************** Loading / writing routines **************************/
+/**************************************************************************/
+
+
+
+/******************************************************************************
+ *  @brief Routine loading the parameters from the configuration file.
+ *
+ *  This function reads a configuration file line by line, parsing and
+ *  assigning values to the `parameters` structure based on section headers
+ *  and key-value pairs. It supports three configuration sections
+ *  (`[model]`, `[simulation]`, and `[result]`).
+ *
+ *  The function handles the following sections and their keys:
+ *  - **[model]**
+ *    - `drift`: Sets the drift velocity (`alpha`).
+ *    - `X0`: Sets the initial position.
+ *    - `trajectory_length`: Defines the maximum trajectory length.
+ *    - `t_distribution`: Specifies the time interval distribution type and
+ *      its associated parameter.
+ *    - `M_distribution`: Specifies the energy replenishment distribution
+ *      type and its associated parameter.
+ *  - **[simulation]**
+ *    - `n_changes`: Defines the number of trajectory changes per Metropolis
+ *      step.
+ *    - `importance_sampling`: Specifies the importance sampling type and
+ *      its parameter.
+ *    - `n_steps`: Sets the total number of Metropolis steps.
+ *  - **[result]**
+ *    - `observable`: Specifies the quantity to observe (`T` or `n`).
+ *    - `hist_min`, `hist_max`: Define the histogram range.
+ *    - `n_bins`: Specifies the number of histogram bins.
+ *
+ *  @param [in] filename
+ *      Path to the configuration file.
+ *  @param [out] parameters
+ *      Pointer to the `Parameters` structure that will be populated with
+ *      the parsed values from the configuration file.
+ *
+ *  @return int
+ *      - `0` if the configuration was loaded successfully.
+ *      - `-1` if an error occurred (e.g., file could not be opened or invalid
+ *        configuration values were detected).
+ *
+ *  @details
+ *  - The function skips empty lines and comments (lines starting with `#`).
+ *  - Section headers are enclosed in square brackets (e.g., `[model]`).
+ *  - Key-value pairs are parsed and validated. Unknown keys or invalid values
+ *    will result in an error and terminate the parsing process.
+ *  - For distribution types, only predefined options (`exponential`,
+ *    `half_gaussian`, `fixed`, `uniform`) are accepted.
+ *
+ *  @note
+ *  - Errors are reported to `stderr` using `perror` and `fprintf`.
+ *****************************************************************************/
+int load_parameters(const char *filename,
+                    Parameters *parameters) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Could not open configuration file");
+        return -1;
+    }
+
+    char line[MAX_LINE_LENGTH];
+    char section[MAX_LINE_LENGTH] = "";
+
+    while (fgets(line, sizeof(line), file)) {
+        /* Remove newline characters */
+        line[strcspn(line, "\n")] = 0;
+
+        /* Skip empty lines and comments */
+        if (line[0] == '#' || strlen(line) == 0) continue;
+
+        /* Detect section headers */
+        if (line[0] == '[') {
+            sscanf(line, "[%[^]]", section);
+            continue;
+        }
+
+        /* Parsing key-value pairs */
+        if (strcmp(section, "model") == 0) {
+            if (strstr(line, "drift") == line) {
+                sscanf(line, "drift = %lf", &parameters->alpha);
+            } else if (strstr(line, "X0") == line) {
+                sscanf(line, "X0 = %lf", &parameters->X0);
+            } else if (strstr(line, "trajectory_length") == line) {
+                sscanf(line, "trajectory_length = %d", &parameters->trajectory_length);
+            } else if (strstr(line, "t_distribution") == line) {
+                // note that sscanf breaks on the space
+                sscanf(line, "t_distribution = %s", parameters->t_distribution);
+                if (strcmp(parameters->t_distribution, "exponential") == 0 ||
+                    strcmp(parameters->t_distribution, "half_gaussian") == 0 ||
+                    strcmp(parameters->t_distribution, "fixed") == 0 ||
+                    strcmp(parameters->t_distribution, "uniform") == 0) {
+                    // all four distributions have one parameter
+                    parameters->tau_n_parameters = 1;
+
+                    char param_str[MAX_LINE_LENGTH];
+                    sscanf(line, "t_distribution = %*s [%[^]]", param_str);
+                    parameters->t_parameters[0] = atof(param_str);
+
+                    } else {
+                        fprintf(stderr, "Error: Unknown t_distribution %s\n",
+                                         parameters->t_distribution);
+                        fclose(file);
+                        return -1;
+                    }
+            } else if (strstr(line, "M_distribution") == line) {
+                sscanf(line, "M_distribution = %s", parameters->M_distribution);
+                if (strcmp(parameters->M_distribution, "exponential") == 0 ||
+                    strcmp(parameters->M_distribution, "half_gaussian") == 0 ||
+                    strcmp(parameters->M_distribution, "fixed") == 0 ||
+                    strcmp(parameters->M_distribution, "uniform") == 0) {
+
+                    parameters->M_n_parameters = 1;
+                    char param_str[MAX_LINE_LENGTH];
+                    sscanf(line, "M_distribution = %*s [%[^]]", param_str);
+                    parameters->M_parameters[0] = atof(param_str);
+                    } else {
+                        fprintf(stderr, "Error: Unknown M_distribution %s\n",
+                                parameters->M_distribution);
+                        fclose(file);
+                        return -1;
+                    }
+            }
+        } else if (strcmp(section, "simulation") == 0) {
+            if (strstr(line, "n_changes") == line) {
+                sscanf(line, "n_changes = %d", &parameters->n_changes);
+            } else if (strstr(line, "importance_sampling") == line) {
+                sscanf(line, "importance_sampling = %s", parameters->tilt_type);
+
+                if (strcmp(parameters->tilt_type, "exponential") == 0) {
+                    char param_str[MAX_LINE_LENGTH];
+                    sscanf(line, "importance_sampling = %*s [%[^]]", param_str);
+                    parameters->theta_is = atof(param_str);
+                } else if (strcmp(parameters->tilt_type, "none") == 0) {
+                    parameters->theta_is = 0;
+                } else {
+                    fprintf(stderr, "Error: Unknown importance_sampling type %s\n",
+                            parameters->tilt_type);
+                    fclose(file);
+                    return -1;
+                }
+            } else if (strstr(line, "n_steps") == line) {
+                sscanf(line, "n_steps = %lld", &parameters->n_steps);
+            }
+        } else if (strcmp(section, "result") == 0) {
+            if (strstr(line, "observable") == line) {
+                sscanf(line, "observable = %c", &parameters->observable);
+            } else if (strstr(line, "hist_min") == line) {
+                sscanf(line, "hist_min = %lf", &parameters->x_min);
+            } else if (strstr(line, "hist_max") == line) {
+                sscanf(line, "hist_max = %lf", &parameters->x_max);
+            } else if (strstr(line, "n_bins") == line) {
+                sscanf(line, "n_bins = %d", &parameters->n_bins);
+            }
+        }
+    }
+
+    fclose(file);
+    return 0;
+}
+
 
 /*** initialize the simulation by loading the command line parameters       ***/
 int initialize_simulation(const int argc, char *argv[],
@@ -649,6 +997,7 @@ int initialize_result(const Parameters *simulation_parameters,
     return 0;
 }
 
+
 int initialize_trajectory(Trajectory trajectory,
                             const Parameters *simulation_parameters) {
 
@@ -667,8 +1016,7 @@ int initialize_trajectory(Trajectory trajectory,
         fclose(fptr);
     }
     /* compute first passage properties */
-    compute_fp(&trajectory.n_fp, &trajectory.T_fp,
-        *simulation_parameters, trajectory.jumps,trajectory.waiting_times);
+    find_first_passage(trajectory, *simulation_parameters);
     return 1;
 }
 
@@ -695,7 +1043,7 @@ int save_results(const Parameters *simulation_parameters,
 
     /* histograms */
     for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
-        const double average_ln_w =  ln_w(result_data->bin_centers[bin_id],
+        const double average_ln_w =  log_likelihood_ratio(result_data->bin_centers[bin_id],
                                           result_data->bin_centers[bin_id],
                                           simulation_parameters)
                     + log(simulation_parameters->n_steps)
@@ -711,127 +1059,7 @@ int save_results(const Parameters *simulation_parameters,
     return 1;
 }
 
-/* metropolis step */
-/* perform one step and update trajectory */
-/* if parameters.n_changes == -1, then the trajectory is generated from scratch */
-/* return 1 if the trajectory is changed and 0 if it stayed the same */
 
-/* in the case where the trajectory is generated from scratch
- * it is better to compute the first passage properties on the fly
- * as it is much faster
- */
-
-/* in the case where only part of the trajectory is updated, we update the trajectory
- * and then revert the changes if needed. This is because the acceptance rate is higher than 50%
- * therofore this approach is more efficient.
- */
-int metropolis_step(
-    Trajectory trajectory,
-    const Parameters simulation_parameters,
-    int *indices_to_change,
-    double *t_old,
-    double *M_old
-    ) {
-    int step_accepted = 0;
-    bool overshoot = false; // flag to keep track of the overshooting in the importance sampling scheme
-
-    if (simulation_parameters.n_changes == -1 ) {
-        /* trajectory is generated from scratch */
-        trajectory.n_fp = 0;
-        trajectory.T_fp = 0;
-        double X_current = simulation_parameters.X0;
-
-        for (int i=0; i < simulation_parameters.trajectory_length; i++) {
-            trajectory.waiting_times[i] = generate_t(&simulation_parameters);
-            trajectory.jumps[i] = generate_M(&simulation_parameters);
-
-            X_current += trajectory.jumps[i] - simulation_parameters.alpha * trajectory.waiting_times[i];
-
-            trajectory.T_fp += trajectory.waiting_times[i];
-            trajectory.n_fp += 1;
-
-            /* first passage terminates generation */
-            if (X_current <= 0) {
-                trajectory.T_fp += X_current / simulation_parameters.alpha;
-                break;
-            }
-        }
-
-        step_accepted = 1;
-    }
-
-    if (simulation_parameters.n_changes > 0 ){
-        const double T_fp_old = trajectory.T_fp;
-        const int n_fp_old = trajectory.n_fp;
-
-
-        int min_jump_index = simulation_parameters.trajectory_length;
-
-
-        /* generate new steps  */
-        for(int i = 0; i < simulation_parameters.n_changes; i++) {
-            /* pick a random index [0, trajectory_length) */
-            indices_to_change[i] = rand()
-                                   % simulation_parameters.trajectory_length;
-
-            /* store old jumps */
-            t_old[i] = trajectory.waiting_times[indices_to_change[i]];
-            M_old[i] = trajectory.jumps[indices_to_change[i]];
-
-            /* generate new jumps */
-            trajectory.waiting_times[indices_to_change[i]] = generate_t(&simulation_parameters);
-            trajectory.jumps[indices_to_change[i]] = generate_M(&simulation_parameters);
-
-            /* update the minimum index of the jump if necessary*/
-            if (indices_to_change[i] < min_jump_index) {
-                min_jump_index = indices_to_change[i];
-            }
-        }
-
-        double pAcc = 1;
-
-        /* if all updates happened after the trajectory reached zero,
-         * then the first passage properties remain the same
-         * and hence the Metropolis move is always accepted
-         * else we need to compute the acceptance probability */
-        if (min_jump_index <= n_fp_old) {
-            int first_passage = compute_fp(&trajectory.n_fp, &trajectory.T_fp,
-                                            simulation_parameters,
-                                            trajectory.jumps,trajectory.waiting_times);
-
-            /* if there is no first passage then in the importance sampling the proposed move is always rejected */
-            if ((first_passage == -1) && (simulation_parameters.theta_is != 0)) {
-                pAcc = 0;
-                overshoot = true;
-            } else {
-                pAcc *= exp( ln_w(trajectory.n_fp, trajectory.T_fp, &simulation_parameters)
-                            - ln_w(n_fp_old, T_fp_old, &simulation_parameters) );
-            }
-
-            /* accept/reject step */
-            if( rand() / (RAND_MAX + 1.0) < pAcc ){
-                step_accepted = 1;
-            } else {
-                /* the new trajectory is rejected
-                                 * and the changes should be reverted */
-                step_accepted = 0;
-                for(int i = simulation_parameters.n_changes - 1; i >=0; i--) {
-                    /* NB as the indices may repeat, the loop should iterate in
-                     * the opposite direction to revert the changes properly. */
-                    trajectory.waiting_times[indices_to_change[i]] = t_old[i];
-                    trajectory.jumps[indices_to_change[i]] = M_old[i];
-                }
-
-                /* restore first passage properties to its original values */
-                trajectory.T_fp = T_fp_old;
-                trajectory.n_fp = n_fp_old;
-            }
-        }
-    }
-
-    if (overshoot) { return -1; }
-    return step_accepted;
-}
 
 int main(int argc, char *argv[]) {
     /**************************************************************************/
@@ -943,10 +1171,10 @@ int main(int argc, char *argv[]) {
             result_data.hist_counts[bin_id] += 1;
             /* in the weighted histogram we rescale the weight by a constant
              * to avoid numerical overflow */
-            double average_ln_w =  ln_w(result_data.bin_centers[bin_id],
+            double average_ln_w =  log_likelihood_ratio(result_data.bin_centers[bin_id],
                                         result_data.bin_centers[bin_id],
                                         &simulation_parameters);
-            double ln_w_current =  ln_w(trajectory.n_fp, trajectory.T_fp, &simulation_parameters);
+            double ln_w_current =  log_likelihood_ratio(trajectory.n_fp, trajectory.T_fp, &simulation_parameters);
             result_data.hist_weighted[bin_id] += exp( - ln_w_current
                                                       + average_ln_w);
         }
