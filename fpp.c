@@ -508,7 +508,13 @@ int save_results(const Parameters *simulation_parameters,
  * and then revert the changes if needed. This is because the acceptance rate is higher than 50%
  * therofore this approach is more efficient.
  */
-int metropolis_step(Trajectory trajectory, const Parameters simulation_parameters) {
+int metropolis_step(
+    Trajectory trajectory,
+    const Parameters simulation_parameters,
+    int *indices_to_change,
+    double *t_old,
+    double *M_old
+    ) {
     int step_accepted = 0;
     bool overshoot = false; // flag to keep track of the overshooting in the importance sampling scheme
 
@@ -541,12 +547,7 @@ int metropolis_step(Trajectory trajectory, const Parameters simulation_parameter
         const double T_fp_old = trajectory.T_fp;
         const int n_fp_old = trajectory.n_fp;
 
-        int *indices_to_change = (int *) malloc(simulation_parameters.n_changes
-                                        * sizeof(int));
-        double *t_old  = (double *) malloc( simulation_parameters.n_changes
-                                                * sizeof(double) );
-        double *M_old  = (double *) malloc( simulation_parameters.n_changes
-                                                * sizeof(double) );
+
         int min_jump_index = simulation_parameters.trajectory_length;
 
 
@@ -609,13 +610,6 @@ int metropolis_step(Trajectory trajectory, const Parameters simulation_parameter
                 trajectory.n_fp = n_fp_old;
             }
         }
-
-        /* */
-        free(indices_to_change);
-        free(t_old);
-        free(M_old);
-
-
     }
 
     if (overshoot) { return -1; }
@@ -623,7 +617,6 @@ int metropolis_step(Trajectory trajectory, const Parameters simulation_parameter
 }
 
 int main(int argc, char *argv[]) {
-
     /**************************************************************************/
     /************************ Initialization Routine **************************/
     /**************************************************************************/
@@ -635,7 +628,7 @@ int main(int argc, char *argv[]) {
     if (initialize_simulation(argc, argv,
                               &simulation_parameters) == -1){
         fprintf(stderr, "Error while initializing simulation\n");
-    }
+                              }
     initialize_result(&simulation_parameters, &result_data);
 
     /* allocate the memory for the trajectory */
@@ -648,6 +641,12 @@ int main(int argc, char *argv[]) {
 
     initialize_trajectory(trajectory, &simulation_parameters);
 
+    int changes_array_size  = simulation_parameters.n_changes;
+    if (changes_array_size < 0){ changes_array_size = 1; }
+
+    int *indices_to_change = (int *) malloc(changes_array_size * sizeof(int));
+    double *t_old  = (double *) malloc( changes_array_size * sizeof(double) );
+    double *M_old  = (double *) malloc( changes_array_size * sizeof(double) );
 
     /**************************************************************************/
     /************************  Metropolis algorithm  **************************/
@@ -679,7 +678,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* the main part of the Metropolis */
-        const int step_is_accepted = metropolis_step(trajectory, simulation_parameters);
+        const int step_is_accepted = metropolis_step(trajectory, simulation_parameters, indices_to_change, t_old, M_old);
         if (step_is_accepted == -1) {
             /* if there is an overshoot in the importance sampling scheme */
             result_data.overshoot ++;
@@ -775,6 +774,12 @@ int main(int argc, char *argv[]) {
     free(trajectory.waiting_times);
     free(trajectory.jumps);
 
+    /* free the memory for the update steps */
+    free(indices_to_change);
+    free(t_old);
+    free(M_old);
+
+    /* free the memory in the histogram */
     free(result_data.bin_centers);
     free(result_data.hist_counts);
     free(result_data.hist_weighted);
