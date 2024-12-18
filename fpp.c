@@ -60,7 +60,7 @@ typedef struct parameters {
     /* time intervals */
     char t_distribution[20];  /* distribution type */
     int tau_n_parameters;       /* number of parameters in the distribution */
-    double tau_parameters[10];  /* array of parameters */
+    double t_parameters[10];  /* array of parameters */
 
     /* energy replenishments */
     char M_distribution[20];    /* distribution type */
@@ -111,7 +111,59 @@ typedef struct trajectory {
 
 
 #define MAX_LINE_LENGTH 256
-/*** loads the simulation parameters in from the configuration file         ***/
+
+
+
+/******************************************************************************
+ *  @brief Routine loading the parameters from the configuration file.
+ *
+ *  This function reads a configuration file line by line, parsing and
+ *  assigning values to the `parameters` structure based on section headers
+ *  and key-value pairs. It supports three configuration sections
+ *  (`[model]`, `[simulation]`, and `[result]`).
+ *
+ *  The function handles the following sections and their keys:
+ *  - **[model]**
+ *    - `drift`: Sets the drift velocity (`alpha`).
+ *    - `X0`: Sets the initial position.
+ *    - `trajectory_length`: Defines the maximum trajectory length.
+ *    - `t_distribution`: Specifies the time interval distribution type and
+ *      its associated parameter.
+ *    - `M_distribution`: Specifies the energy replenishment distribution
+ *      type and its associated parameter.
+ *  - **[simulation]**
+ *    - `n_changes`: Defines the number of trajectory changes per Metropolis
+ *      step.
+ *    - `importance_sampling`: Specifies the importance sampling type and
+ *      its parameter.
+ *    - `n_steps`: Sets the total number of Metropolis steps.
+ *  - **[result]**
+ *    - `observable`: Specifies the quantity to observe (`T` or `n`).
+ *    - `hist_min`, `hist_max`: Define the histogram range.
+ *    - `n_bins`: Specifies the number of histogram bins.
+ *
+ *  @param [in] filename
+ *      Path to the configuration file.
+ *  @param [out] parameters
+ *      Pointer to the `Parameters` structure that will be populated with
+ *      the parsed values from the configuration file.
+ *
+ *  @return int
+ *      - `0` if the configuration was loaded successfully.
+ *      - `-1` if an error occurred (e.g., file could not be opened or invalid
+ *        configuration values were detected).
+ *
+ *  @details
+ *  - The function skips empty lines and comments (lines starting with `#`).
+ *  - Section headers are enclosed in square brackets (e.g., `[model]`).
+ *  - Key-value pairs are parsed and validated. Unknown keys or invalid values
+ *    will result in an error and terminate the parsing process.
+ *  - For distribution types, only predefined options (`exponential`,
+ *    `half_gaussian`, `fixed`, `uniform`) are accepted.
+ *
+ *  @note
+ *  - Errors are reported to `stderr` using `perror` and `fprintf`.
+ *****************************************************************************/
 int load_parameters(const char *filename,
                     Parameters *parameters) {
     FILE *file = fopen(filename, "r");
@@ -124,19 +176,19 @@ int load_parameters(const char *filename,
     char section[MAX_LINE_LENGTH] = "";
 
     while (fgets(line, sizeof(line), file)) {
-        // Remove newline characters
+        /* Remove newline characters */
         line[strcspn(line, "\n")] = 0;
 
-        // Skip empty lines and comments
+        /* Skip empty lines and comments */
         if (line[0] == '#' || strlen(line) == 0) continue;
 
-        // Detect section headers
+        /* Detect section headers */
         if (line[0] == '[') {
             sscanf(line, "[%[^]]", section);
             continue;
         }
 
-        // Parsing key-value pairs
+        /* Parsing key-value pairs */
         if (strcmp(section, "model") == 0) {
             if (strstr(line, "drift") == line) {
                 sscanf(line, "drift = %lf", &parameters->alpha);
@@ -156,7 +208,7 @@ int load_parameters(const char *filename,
 
                     char param_str[MAX_LINE_LENGTH];
                     sscanf(line, "t_distribution = %*s [%[^]]", param_str);
-                    parameters->tau_parameters[0] = atof(param_str);
+                    parameters->t_parameters[0] = atof(param_str);
 
                     } else {
                         fprintf(stderr, "Error: Unknown t_distribution %s\n",
@@ -221,23 +273,104 @@ int load_parameters(const char *filename,
 }
 
 
-/*** generate random variable from an exponential distribution              ***/
-/*** probability density: p(x) = lambda * exp( - lambda * x )               ***/
+
+/******************************************************************************
+ * @brief Generate a random variable from an exponential distribution.
+ *
+ * This function generates a random variable `x` from an exponential
+ * distribution with probability density function:
+ *
+ *      p(x) = λ * exp(-λ * x)  for x >= 0
+ *
+ * where λ is the rate parameter of the distribution.
+ *
+ * @param [in] lambda
+ *      The rate parameter ( λ>0 ) of the exponential distribution.
+ *
+ * @return double
+ *      A random variable sampled from the exponential distribution.
+ *
+ * @details
+ * - The function uses the inverse transform sampling method, which
+ *   transforms a uniform random variable `u` into an exponential random
+ *   variable.
+ * - The transformation is given by:
+ *
+ *      x = - log(1 - u) / λ
+ *
+ *   where `u` is a uniformly distributed random variable in the range [0, 1).
+ *****************************************************************************/
 double generate_exponential(const double lambda)
 {
     const double u = rand() / (RAND_MAX + 1.0);
     return - log(1 - u) / lambda;
 }
 
-/*** generate random variable from uniform distribution on [a,b]            ***/
+
+
+/******************************************************************************
+ * @brief Generate a random variable from a uniform distribution.
+ *
+ * This function generates a random variable `x` from a uniform distribution
+ * defined over the interval `[low, high]` with probability density function:
+ *
+ *      p(x) = 1 / (high - low)  for low <= x <= high
+ *
+ * @param [in] low
+ *      The lower bound of the uniform distribution interval.
+ * @param [in] high
+ *      The upper bound of the uniform distribution interval. It must satisfy
+ *      `high > low`.
+ *
+ * @return double
+ *      A random variable sampled from the uniform distribution.
+ *
+ * @details
+ * - The function uses a uniform random variable `u` in the range [0, 1) to
+ *   generate the output using the formula:
+ *
+ *      x = low + u * (high - low)
+ *
+ *****************************************************************************/
 double generate_uniform(const double low, const double high) {
     const double u = rand() / (RAND_MAX + 1.0);
     return low + u * (high - low);
 }
 
-/*** generate random variable from half gaussian distribution               ***/
-/*** probability density:                                                   ***/
-/***        p(x) =  sqrt(2/pi) * lambda * exp( - lambda^2 * x^2 / 2 )       ***/
+
+
+/******************************************************************************
+ * @brief Generate a random variable from a half-Gaussian distribution.
+ *
+ * This function generates a random variable `x` from a half-Gaussian
+ * distribution with probability density function:
+ *
+ *      p(x) = sqrt(2 / π) * λ * exp(-λ² * x² / 2)  for x >= 0
+ *
+ * where λ is the shape parameter of the distribution.
+ *
+ * @param [in] lambda
+ *      The shape parameter (λ) of the half-Gaussian distribution.
+ *
+ * @return double
+ *      A random variable sampled from the half-Gaussian distribution.
+ *
+ * @details
+ * - The function uses the Box-Muller transform to generate standard normal
+ *   variables and then scales them to create a half-Gaussian distribution
+ *   with required variance.
+ * - The procedure involves:
+ *   1. Generating two independent uniform random variables `u1` and `u2`
+ *      in the range [0, 1).
+ *   2. Computing a standard normal variable `z0` using the Box-Muller
+ *      transform:
+ *
+ *          z0 = sqrt(-2 * log(u1)) * cos(2π * u2)
+ *
+ *   3. Scaling and taking the absolute value:
+ *
+ *          x = |z0 / λ|
+ *****************************************************************************/
 double generate_half_gaussian(const double lambda) {
     const double u1 = rand() / (RAND_MAX + 1.0);
     const double u2 = rand() / (RAND_MAX + 1.0);
@@ -250,25 +383,63 @@ double generate_half_gaussian(const double lambda) {
 
 
 
-
-
-/*** generate a replenishment                                               ***/
-/*** the probability distribution is specified in simulation parameters     ***/
+/******************************************************************************
+ * @brief Generate a jump value based on a specified probability distribution.
+ *
+ * This function generates a jump `M` according to the
+ * distribution specified in the simulation parameters. It supports several
+ * distribution types: fixed, exponential, uniform, and half-Gaussian.
+ *
+ * @param [in] parameters
+ *      Pointer to the `Parameters` structure containing the simulation
+ *      settings. The relevant fields are:
+ *      - `M_distribution`: The type of distribution for jumps.
+ *        Supported values are:
+ *          - `"fixed"`: Fixed jumps.
+ *          - `"exponential"`: Exponential distribution.
+ *          - `"uniform"`: Uniform distribution.
+ *          - `"half_gaussian"`: Half-Gaussian distribution.
+ *      - `M_parameters`: Array of parameters for the specified distribution.
+ *        The required parameters depend on the distribution type:
+ *          - `"fixed"`: [M0] (single fixed value).
+ *          - `"exponential"`: [λ] (rate parameter).
+ *          - `"uniform"`: [b] (upper bound; lower bound is 0).
+ *          - `"half_gaussian"`: [λ] (variance parameter).
+ *
+ * @return double
+ *      A random jump value sampled from the specified distribution.
+ *
+ * @details
+ * - **Fixed jumps**: Returns a constant value:
+ *
+ *        M = M_parameters[0]
+ *
+ * - **Exponential jumps**: Uses `generate_exponential` to sample from:
+ *
+ *        p(M) = λ * exp(-λ * M)  for M >= 0
+ *
+ * - **Uniform jumps**: Uses `generate_uniform` to sample from:
+ *
+ *        p(M) = 1 / b  for 0 <= M <= b
+ *
+ * - **Half-Gaussian jumps**: Uses `generate_half_gaussian` to sample from:
+ *
+ *        p(M) = sqrt(2 / π) * λ * exp(-λ² * M² / 2)  for M >= 0
+ *
+ * @note
+ * - If an unknown distribution type is specified, the function will return `0`
+ *****************************************************************************/
 double generate_M(const Parameters *parameters)
 {
-    /* fixed replenishment */
     if (strcmp(parameters->M_distribution, "fixed") == 0) {
         return  parameters->M_parameters[0];
     }
-    /* exponential replenishment */
     if (strcmp(parameters->M_distribution, "exponential") == 0) {
         return  generate_exponential(parameters->M_parameters[0]);
     }
-    /* uniform replenishment */
     if (strcmp(parameters->M_distribution, "uniform") == 0) {
         return  generate_uniform(0,  parameters->M_parameters[0]);
     }
-    /* uniform replenishment */
     if (strcmp(parameters->M_distribution, "half_gaussian") == 0) {
         return  generate_half_gaussian(parameters->M_parameters[0]);
     }
@@ -276,41 +447,87 @@ double generate_M(const Parameters *parameters)
     return 0;
 }
 
-/*** generate a single time interval                                        ***/
-/*** the probability distribution is specified in simulation parameters     ***/
-double generate_tau(const Parameters *parameters)
+
+
+/******************************************************************************
+ * @brief Generate a single time interval based on a specified probability
+ *        distribution.
+ *
+ * This function generates a time interval `t` according to the distribution
+ * specified in the simulation parameters. It supports several distribution
+ * types: fixed, exponential, uniform, and half-Gaussian.
+ *
+ * @param [in] parameters
+ *      Pointer to the `Parameters` structure containing the simulation
+ *      settings. The relevant fields are:
+ *      - `t_distribution`: The type of distribution for time intervals.
+ *        Supported values are:
+ *          - `"fixed"`: Fixed time intervals.
+ *          - `"exponential"`: Exponential distribution.
+ *          - `"uniform"`: Uniform distribution.
+ *          - `"half_gaussian"`: Half-Gaussian distribution.
+ *      - `t_parameters`: Array of parameters for the specified distribution.
+ *        The required parameters depend on the distribution type:
+ *          - `"fixed"`: [t0] (single fixed value).
+ *          - `"exponential"`: [λ] (rate parameter).
+ *          - `"uniform"`: [b] (upper bound; lower bound is 0).
+ *          - `"half_gaussian"`: [λ] (shape parameter).
+ *
+ * @return double
+ *      A random time interval sampled from the specified distribution.
+ *
+ * @details
+ * - **Fixed time intervals**: Returns a constant value:
+ *
+ *        t = t_parameters[0]
+ *
+ * - **Exponential time intervals**: Uses `generate_exponential` to sample from:
+ *
+ *        p(t) = λ * exp(-λ * t)  for t >= 0
+ *
+ * - **Uniform time intervals**: Uses `generate_uniform` to sample from:
+ *
+ *        p(t) = 1 / b  for 0 <= t <= b
+ *
+ * - **Half-Gaussian time intervals**: Uses `generate_half_gaussian` to sample
+ *   from:
+ *
+ *        p(t) = sqrt(2 / π) * λ * exp(-λ² * t² / 2)  for t >= 0
+ *
+ * @note
+ * - If an unknown distribution type is specified, the function will return `0`
+ *****************************************************************************/
+double generate_t(const Parameters *parameters)
 {
-    /* fixed replenishment */
     if (strcmp(parameters->t_distribution, "fixed") == 0) {
-        return  parameters->tau_parameters[0];
+        return  parameters->t_parameters[0];
     }
-    /* exponential replenishment */
     if (strcmp(parameters->t_distribution, "exponential") == 0) {
-        return  generate_exponential(parameters->tau_parameters[0]);
+        return  generate_exponential(parameters->t_parameters[0]);
     }
-    /* uniform replenishment */
     if (strcmp(parameters->t_distribution, "uniform") == 0) {
-        return  generate_uniform(0, parameters->tau_parameters[0]);
+        return  generate_uniform(0, parameters->t_parameters[0]);
     }
-    /* uniform replenishment */
     if (strcmp(parameters->t_distribution, "half_gaussian") == 0) {
-        return  generate_half_gaussian(parameters->tau_parameters[0]);
+        return  generate_half_gaussian(parameters->t_parameters[0]);
     }
     return 0;
 }
+
+
 
 /*** compute first passage properties                                       ***/
 /*** the results are stored in T_fp and n_fp                                ***/
 /*** return: 1 -- first passage happens                                     ***/
 /***            T_fp -- lifetime;    n_fp -- last jump with positive energy ***/
 /***        -1 -- no first passage                                          ***/
-/***            T_fp -- total time; n_fp -- length of the trajectory + 1    ***/
+/***            T_fp -- total time of the process;  n_fp -- length of the trajectory    ***/
 /*** NB: n_fp > 0 (the definition of the model)                             ***/
 int compute_fp(int *n_fp, double *T_fp,
                const Parameters parameters,
                double const *M, double const *tau)
 {
-    double E_current = parameters.X0;
+    double X_current = parameters.X0;
 
     /* Initialize first passage properties */
     *T_fp = 0;
@@ -318,11 +535,11 @@ int compute_fp(int *n_fp, double *T_fp,
 
     /* Check when the trajectory reaches zero */
     for (int i = 0; i < parameters.trajectory_length; i++) {
-        E_current += M[i] - parameters.alpha * tau[i];
+        X_current += M[i] - parameters.alpha * tau[i];
         *T_fp += tau[i];
         *n_fp += 1;
-        if (E_current <= 0) { /* Check whether the trajectory reached zero */
-            *T_fp += E_current / parameters.alpha;
+        if (X_current <= 0) { /* Check whether the trajectory reached zero */
+            *T_fp += X_current / parameters.alpha;
             return 1;
         }
     }
@@ -371,7 +588,7 @@ int initialize_simulation(const int argc, char *argv[],
             "metropolis_conf/"
             "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
             simulation_parameters->t_distribution,
-            simulation_parameters->tau_parameters[0],
+            simulation_parameters->t_parameters[0],
             simulation_parameters->M_distribution,
             simulation_parameters->M_parameters[0],
             simulation_parameters->X0,
@@ -391,7 +608,7 @@ int initialize_result(const Parameters *simulation_parameters,
                 "metropolis_data/"
                 "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-hist",
                 simulation_parameters->t_distribution,
-                simulation_parameters->tau_parameters[0],
+                simulation_parameters->t_parameters[0],
                 simulation_parameters->M_distribution,
                 simulation_parameters->M_parameters[0],
                 simulation_parameters->X0,
@@ -439,7 +656,7 @@ int initialize_trajectory(Trajectory trajectory,
     FILE *fptr = fopen(simulation_parameters->filename, "r");
     if (fptr == NULL) {
         for (int i=0; i < simulation_parameters->trajectory_length; i++) {
-            trajectory.waiting_times[i] = generate_tau(simulation_parameters);
+            trajectory.waiting_times[i] = generate_t(simulation_parameters);
             trajectory.jumps[i] = generate_M(simulation_parameters);
         }
     } else {
@@ -525,7 +742,7 @@ int metropolis_step(
         double X_current = simulation_parameters.X0;
 
         for (int i=0; i < simulation_parameters.trajectory_length; i++) {
-            trajectory.waiting_times[i] = generate_tau(&simulation_parameters);
+            trajectory.waiting_times[i] = generate_t(&simulation_parameters);
             trajectory.jumps[i] = generate_M(&simulation_parameters);
 
             X_current += trajectory.jumps[i] - simulation_parameters.alpha * trajectory.waiting_times[i];
@@ -562,7 +779,7 @@ int metropolis_step(
             M_old[i] = trajectory.jumps[indices_to_change[i]];
 
             /* generate new jumps */
-            trajectory.waiting_times[indices_to_change[i]] = generate_tau(&simulation_parameters);
+            trajectory.waiting_times[indices_to_change[i]] = generate_t(&simulation_parameters);
             trajectory.jumps[indices_to_change[i]] = generate_M(&simulation_parameters);
 
             /* update the minimum index of the jump if necessary*/
