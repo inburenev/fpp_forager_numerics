@@ -420,24 +420,24 @@ double generate_t(const Parameters *parameters)
  * @note
  * - In our model `n_fp > 0`.
  *****************************************************************************/
-int find_first_passage(Trajectory trajectory, Parameters *parameters) {
+int find_first_passage(Trajectory * trajectory, Parameters *parameters) {
 
     /* Null pointer checks */
-    if (trajectory.jumps == NULL || trajectory.waiting_times == NULL) {
+    if (trajectory->jumps == NULL || trajectory->waiting_times == NULL) {
         fprintf(stderr, "Error: Null pointer detected in trajectory.\n");
         return -2;
     }
 
     /* Compute first passage properties */
     double X_current = parameters->X0;
-    trajectory.T_fp = 0;
-    trajectory.n_fp = 0;
+    trajectory->T_fp = 0;
+    trajectory->n_fp = 0;
     for (int i = 0; i < parameters->trajectory_length; i++) {
-            X_current += trajectory.jumps[i] - parameters->alpha * trajectory.waiting_times[i];
-            trajectory.T_fp += trajectory.waiting_times[i];
-            trajectory.n_fp += 1;
+            X_current += trajectory->jumps[i] - parameters->alpha * trajectory->waiting_times[i];
+            trajectory->T_fp += trajectory->waiting_times[i];
+            trajectory->n_fp += 1;
             if (X_current <= 0) { /* Check whether the trajectory reached zero */
-                trajectory.T_fp += X_current / parameters->alpha;
+                trajectory->T_fp += X_current / parameters->alpha;
                 return 1;
             }
         }
@@ -556,31 +556,31 @@ double log_likelihood_ratio(const int n_fp, const double T_fp,
  * - The `trajectory` structure must have preallocated memory for the arrays
  *   `waiting_times` and `jumps` with size at least `trajectory_length`.
  *****************************************************************************/
-int generate_trajectory_from_scratch(Trajectory trajectory,
+int generate_trajectory_from_scratch(Trajectory * trajectory,
                                      Parameters *parameters,
                                     const bool stop_on_first_passage) {
-    if (!trajectory.waiting_times || !trajectory.jumps) {
+    if (!trajectory->waiting_times || !trajectory->jumps) {
         fprintf(stderr, "Error: Null pointer passed.\n");
         return -2;
     }
 
-    trajectory.n_fp = 0;
-    trajectory.T_fp = 0;
+    trajectory->n_fp = 0;
+    trajectory->T_fp = 0;
     double X_current = parameters->X0;
     bool first_passage_happened = false;
 
     for (int i=0; i < parameters->trajectory_length; i++) {
-        trajectory.waiting_times[i] = generate_t(&parameters);
-        trajectory.jumps[i] = generate_M(&parameters);
+        trajectory->waiting_times[i] = generate_t(parameters);
+        trajectory->jumps[i] = generate_M(parameters);
 
         if (!first_passage_happened) {
-            X_current += trajectory.jumps[i] - parameters->alpha * trajectory.waiting_times[i];
+            X_current += trajectory->jumps[i] - parameters->alpha * trajectory->waiting_times[i];
 
-            trajectory.T_fp += trajectory.waiting_times[i];
-            trajectory.n_fp += 1;
+            trajectory->T_fp += trajectory->waiting_times[i];
+            trajectory->n_fp += 1;
 
             if (X_current <= 0) {
-                trajectory.T_fp += X_current / parameters->alpha;
+                trajectory->T_fp += X_current / parameters->alpha;
                 first_passage_happened = true;
                 /* first passage terminates generation */
                 if (stop_on_first_passage) {
@@ -654,8 +654,8 @@ int generate_trajectory_from_scratch(Trajectory trajectory,
  * - Proper memory allocation and de-allocation for `indices_to_change`,
  *   `t_old`, and `M_old` is done outside of this function
  *****************************************************************************/
-int metropolis_step(Trajectory trajectory,
-                    const Parameters  * simulation_parameters,
+int metropolis_step(Trajectory * trajectory,
+                    Parameters  * simulation_parameters,
                     int *indices_to_change, double *t_old, double *M_old
     ){
 
@@ -672,8 +672,8 @@ int metropolis_step(Trajectory trajectory,
 
     bool overshoot = false; // flag to keep track of the overshooting in the importance sampling scheme
     if (simulation_parameters->n_changes > 0 ){
-        const double T_fp_old = trajectory.T_fp;
-        const int n_fp_old = trajectory.n_fp;
+        const double T_fp_old = trajectory->T_fp;
+        const int n_fp_old = trajectory->n_fp;
 
 
         int min_jump_index = simulation_parameters->trajectory_length;
@@ -686,12 +686,12 @@ int metropolis_step(Trajectory trajectory,
                                    % simulation_parameters->trajectory_length;
 
             /* store old jumps */
-            t_old[i] = trajectory.waiting_times[indices_to_change[i]];
-            M_old[i] = trajectory.jumps[indices_to_change[i]];
+            t_old[i] = trajectory->waiting_times[indices_to_change[i]];
+            M_old[i] = trajectory->jumps[indices_to_change[i]];
 
             /* generate new jumps */
-            trajectory.waiting_times[indices_to_change[i]] = generate_t(simulation_parameters);
-            trajectory.jumps[indices_to_change[i]] = generate_M(simulation_parameters);
+            trajectory->waiting_times[indices_to_change[i]] = generate_t(simulation_parameters);
+            trajectory->jumps[indices_to_change[i]] = generate_M(simulation_parameters);
 
             /* update the minimum index of the jump if necessary*/
             if (indices_to_change[i] < min_jump_index) {
@@ -705,7 +705,10 @@ int metropolis_step(Trajectory trajectory,
          * then the first passage properties remain the same
          * and hence the Metropolis move is always accepted
          * else we need to compute the acceptance probability */
-        if (min_jump_index <= n_fp_old) {
+        if (min_jump_index > n_fp_old) {
+            step_accepted = 1;
+        }
+        else {
             const int first_passage = find_first_passage(trajectory, simulation_parameters);
             // int first_passage = compute_fp(&trajectory.n_fp, &trajectory.T_fp,
             //                                 simulation_parameters,
@@ -716,8 +719,8 @@ int metropolis_step(Trajectory trajectory,
                 pAcc = 0;
                 overshoot = true;
             } else {
-                pAcc *= exp( log_likelihood_ratio(trajectory.n_fp, trajectory.T_fp, &simulation_parameters)
-                            - log_likelihood_ratio(n_fp_old, T_fp_old, &simulation_parameters) );
+                pAcc *= exp( log_likelihood_ratio(trajectory->n_fp, trajectory->T_fp, simulation_parameters)
+                            - log_likelihood_ratio(n_fp_old, T_fp_old, simulation_parameters) );
             }
 
             /* accept/reject step */
@@ -730,13 +733,13 @@ int metropolis_step(Trajectory trajectory,
                 for(int i = simulation_parameters->n_changes - 1; i >=0; i--) {
                     /* NB as the indices may repeat, the loop should iterate in
                      * the opposite direction to revert the changes properly. */
-                    trajectory.waiting_times[indices_to_change[i]] = t_old[i];
-                    trajectory.jumps[indices_to_change[i]] = M_old[i];
+                    trajectory->waiting_times[indices_to_change[i]] = t_old[i];
+                    trajectory->jumps[indices_to_change[i]] = M_old[i];
                 }
 
                 /* restore first passage properties to its original values */
-                trajectory.T_fp = T_fp_old;
-                trajectory.n_fp = n_fp_old;
+                trajectory->T_fp = T_fp_old;
+                trajectory->n_fp = n_fp_old;
             }
         }
     }
@@ -882,10 +885,13 @@ int load_parameters_from_config_file(const char *filename,
                 sscanf(line, "importance_sampling = %s", parameters->tilt_type);
 
                 if (strcmp(parameters->tilt_type, "exponential") == 0) {
+
+                    // sprintf(parameters->tilt_type, "%s", "exponential");
                     char param_str[MAX_LINE_LENGTH];
                     sscanf(line, "importance_sampling = %*s [%[^]]", param_str);
                     parameters->theta_is = atof(param_str);
                 } else if (strcmp(parameters->tilt_type, "none") == 0) {
+                    // sprintf(parameters->tilt_type, "%s", "none");
                     parameters->theta_is = 0;
                 } else {
                     fprintf(stderr, "Error: Unknown importance_sampling type %s\n",
@@ -997,21 +1003,21 @@ int initialize_result(const Parameters *simulation_parameters,
 int save_trajectory(const Trajectory trajectory, const Parameters  parameters) {
 
     FILE *fptr = fopen(parameters.filename_trajectory, "w");
-    fprintf(fptr, "%d %f \n", trajectory.n_fp, trajectory.T_fp);
+    fprintf(fptr, "%d %lf \n", trajectory.n_fp, trajectory.T_fp);
     for (int i =0; i<parameters.trajectory_length; i++) {
-        fprintf(fptr, "%f %f \n", trajectory.jumps[i], trajectory.waiting_times[i]);
+        fprintf(fptr, "%lf %lf \n", trajectory.jumps[i], trajectory.waiting_times[i]);
     }
     fclose(fptr);
     return 1;
 }
 
-int load_trajectory(Trajectory trajectory, Parameters  * parameters) {
+int load_trajectory(Trajectory * trajectory, Parameters  * parameters) {
 
-    FILE *fptr = fopen(parameters->filename_trajectory, "w");
+    FILE *fptr = fopen(parameters->filename_trajectory, "r");
     if (fptr != NULL) {
-        fscanf(fptr, "%d %f", &trajectory.n_fp, &trajectory.T_fp);
+        fscanf(fptr, "%d %lf", &trajectory->n_fp, &trajectory->T_fp);
         for (int i =0; i<parameters->trajectory_length; i++) {
-            fscanf(fptr, "%f %f", &trajectory.jumps[i], &trajectory.waiting_times[i]);
+            fscanf(fptr, "%lf %lf", &trajectory->jumps[i], &trajectory->waiting_times[i]);
         }
         fclose(fptr);
         return 1;
@@ -1021,14 +1027,13 @@ int load_trajectory(Trajectory trajectory, Parameters  * parameters) {
 }
 
 
-int initialize_trajectory(Trajectory trajectory,
-                            Parameters * parameters) {
-    trajectory.waiting_times = (double *)
+int initialize_trajectory(Trajectory * trajectory, Parameters * parameters) {
+    trajectory->waiting_times = (double *)
         malloc( parameters->trajectory_length * sizeof(double) );
-    trajectory.jumps = (double *)
+    trajectory->jumps = (double *)
         malloc( parameters->trajectory_length * sizeof(double) );
-    trajectory.n_fp = 0;
-    trajectory.T_fp = 0;
+    trajectory->n_fp = 0;
+    trajectory->T_fp = 0;
 
     if (load_trajectory(trajectory, parameters) == -1) {
         generate_trajectory_from_scratch(trajectory, parameters, false);
@@ -1181,7 +1186,7 @@ int main(int argc, char *argv[]) {
     if (get_parameters_of_simulation(argv, &simulation_parameters) == -1){
         fprintf(stderr, "Error while initializing simulation\n");
     }
-    initialize_trajectory(trajectory, &simulation_parameters);
+    initialize_trajectory(&trajectory, &simulation_parameters);
     initialize_result(&simulation_parameters, &result_data);
 
     /* Allocate memory for the arrays of indices and steps to be changed later in the metropolis algorithm
@@ -1192,7 +1197,7 @@ int main(int argc, char *argv[]) {
     int changes_array_size  = simulation_parameters.n_changes;
     if (changes_array_size < 0){ changes_array_size = 1; }
 
-    int *indices_to_change = (int *) malloc(changes_array_size * sizeof(int));
+    int *indices_to_change = (int *) malloc( changes_array_size * sizeof(int));
     double *t_old  = (double *) malloc( changes_array_size * sizeof(double) );
     double *M_old  = (double *) malloc( changes_array_size * sizeof(double) );
 
@@ -1226,7 +1231,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* the main part of the Metropolis */
-        const int step_is_accepted = metropolis_step(trajectory, &simulation_parameters, indices_to_change, t_old, M_old);
+        const int step_is_accepted = metropolis_step(&trajectory, &simulation_parameters, indices_to_change, t_old, M_old);
         if (step_is_accepted == -1) {
             /* if there is an overshoot in the importance sampling scheme */
             result_data.overshoot ++;
