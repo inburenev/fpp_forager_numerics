@@ -69,7 +69,7 @@ typedef struct parameters {
 
     /* properties of the Metropolis algorithm */
     int trajectory_length;      /* maximum length of the trajectory */
-    char filename[100];         /* name of the file where the last
+    char filename_trajectory[100];         /* name of the file where the last
                                 trajectory is stored */
 
     char observable;            /* quantity of interest, 'T' or 'n'
@@ -420,7 +420,7 @@ double generate_t(const Parameters *parameters)
  * @note
  * - In our model `n_fp > 0`.
  *****************************************************************************/
-int find_first_passage(Trajectory trajectory, const Parameters parameters) {
+int find_first_passage(Trajectory trajectory, Parameters *parameters) {
 
     /* Null pointer checks */
     if (trajectory.jumps == NULL || trajectory.waiting_times == NULL) {
@@ -429,15 +429,15 @@ int find_first_passage(Trajectory trajectory, const Parameters parameters) {
     }
 
     /* Compute first passage properties */
-    double X_current = parameters.X0;
+    double X_current = parameters->X0;
     trajectory.T_fp = 0;
     trajectory.n_fp = 0;
-    for (int i = 0; i < parameters.trajectory_length; i++) {
-            X_current += trajectory.jumps[i] - parameters.alpha * trajectory.waiting_times[i];
+    for (int i = 0; i < parameters->trajectory_length; i++) {
+            X_current += trajectory.jumps[i] - parameters->alpha * trajectory.waiting_times[i];
             trajectory.T_fp += trajectory.waiting_times[i];
             trajectory.n_fp += 1;
             if (X_current <= 0) { /* Check whether the trajectory reached zero */
-                trajectory.T_fp += X_current / parameters.alpha;
+                trajectory.T_fp += X_current / parameters->alpha;
                 return 1;
             }
         }
@@ -557,7 +557,7 @@ double log_likelihood_ratio(const int n_fp, const double T_fp,
  *   `waiting_times` and `jumps` with size at least `trajectory_length`.
  *****************************************************************************/
 int generate_trajectory_from_scratch(Trajectory trajectory,
-                                    const Parameters parameters,
+                                     Parameters *parameters,
                                     const bool stop_on_first_passage) {
     if (!trajectory.waiting_times || !trajectory.jumps) {
         fprintf(stderr, "Error: Null pointer passed.\n");
@@ -566,21 +566,21 @@ int generate_trajectory_from_scratch(Trajectory trajectory,
 
     trajectory.n_fp = 0;
     trajectory.T_fp = 0;
-    double X_current = parameters.X0;
+    double X_current = parameters->X0;
     bool first_passage_happened = false;
 
-    for (int i=0; i < parameters.trajectory_length; i++) {
+    for (int i=0; i < parameters->trajectory_length; i++) {
         trajectory.waiting_times[i] = generate_t(&parameters);
         trajectory.jumps[i] = generate_M(&parameters);
 
         if (!first_passage_happened) {
-            X_current += trajectory.jumps[i] - parameters.alpha * trajectory.waiting_times[i];
+            X_current += trajectory.jumps[i] - parameters->alpha * trajectory.waiting_times[i];
 
             trajectory.T_fp += trajectory.waiting_times[i];
             trajectory.n_fp += 1;
 
             if (X_current <= 0) {
-                trajectory.T_fp += X_current / parameters.alpha;
+                trajectory.T_fp += X_current / parameters->alpha;
                 first_passage_happened = true;
                 /* first passage terminates generation */
                 if (stop_on_first_passage) {
@@ -655,7 +655,7 @@ int generate_trajectory_from_scratch(Trajectory trajectory,
  *   `t_old`, and `M_old` is done outside of this function
  *****************************************************************************/
 int metropolis_step(Trajectory trajectory,
-                    const Parameters  simulation_parameters,
+                    const Parameters  * simulation_parameters,
                     int *indices_to_change, double *t_old, double *M_old
     ){
 
@@ -665,33 +665,33 @@ int metropolis_step(Trajectory trajectory,
     }
 
     int step_accepted = 0;
-    if (simulation_parameters.n_changes == -1 ) {
+    if (simulation_parameters->n_changes == -1 ) {
         generate_trajectory_from_scratch(trajectory, simulation_parameters, true);
         step_accepted = 1;
     }
 
     bool overshoot = false; // flag to keep track of the overshooting in the importance sampling scheme
-    if (simulation_parameters.n_changes > 0 ){
+    if (simulation_parameters->n_changes > 0 ){
         const double T_fp_old = trajectory.T_fp;
         const int n_fp_old = trajectory.n_fp;
 
 
-        int min_jump_index = simulation_parameters.trajectory_length;
+        int min_jump_index = simulation_parameters->trajectory_length;
 
 
         /* generate new steps  */
-        for(int i = 0; i < simulation_parameters.n_changes; i++) {
+        for(int i = 0; i < simulation_parameters->n_changes; i++) {
             /* pick a random index [0, trajectory_length) */
             indices_to_change[i] = rand()
-                                   % simulation_parameters.trajectory_length;
+                                   % simulation_parameters->trajectory_length;
 
             /* store old jumps */
             t_old[i] = trajectory.waiting_times[indices_to_change[i]];
             M_old[i] = trajectory.jumps[indices_to_change[i]];
 
             /* generate new jumps */
-            trajectory.waiting_times[indices_to_change[i]] = generate_t(&simulation_parameters);
-            trajectory.jumps[indices_to_change[i]] = generate_M(&simulation_parameters);
+            trajectory.waiting_times[indices_to_change[i]] = generate_t(simulation_parameters);
+            trajectory.jumps[indices_to_change[i]] = generate_M(simulation_parameters);
 
             /* update the minimum index of the jump if necessary*/
             if (indices_to_change[i] < min_jump_index) {
@@ -712,7 +712,7 @@ int metropolis_step(Trajectory trajectory,
             //                                 trajectory.jumps,trajectory.waiting_times);
 
             /* if there is no first passage then in the importance sampling the proposed move is always rejected */
-            if ((first_passage == -1) && (simulation_parameters.theta_is != 0)) {
+            if ((first_passage == -1) && (simulation_parameters->theta_is != 0)) {
                 pAcc = 0;
                 overshoot = true;
             } else {
@@ -727,7 +727,7 @@ int metropolis_step(Trajectory trajectory,
                 /* the new trajectory is rejected
                                  * and the changes should be reverted */
                 step_accepted = 0;
-                for(int i = simulation_parameters.n_changes - 1; i >=0; i--) {
+                for(int i = simulation_parameters->n_changes - 1; i >=0; i--) {
                     /* NB as the indices may repeat, the loop should iterate in
                      * the opposite direction to revert the changes properly. */
                     trajectory.waiting_times[indices_to_change[i]] = t_old[i];
@@ -744,6 +744,9 @@ int metropolis_step(Trajectory trajectory,
     if (overshoot) { return -1; }
     return step_accepted;
 }
+
+
+
 
 
 /**************************************************************************/
@@ -802,8 +805,8 @@ int metropolis_step(Trajectory trajectory,
  *  @note
  *  - Errors are reported to `stderr` using `perror` and `fprintf`.
  *****************************************************************************/
-int load_parameters(const char *filename,
-                    Parameters *parameters) {
+int load_parameters_from_config_file(const char *filename,
+                                     Parameters *parameters) {
     FILE *file = fopen(filename, "r");
     if (!file) {
         perror("Could not open configuration file");
@@ -911,41 +914,34 @@ int load_parameters(const char *filename,
 }
 
 
-/*** initialize the simulation by loading the command line parameters       ***/
-int initialize_simulation(const int argc, char *argv[],
-                          Parameters *simulation_parameters) {
 
-    if (load_parameters(argv[1], simulation_parameters) == -1) {
-        fprintf(stderr, "Error while passing arguments\n");
+int get_parameters_of_simulation(char *argv[], Parameters *parameters) {
+
+    /* try to load parameters from the configuration file */
+    if (load_parameters_from_config_file(argv[1], parameters) == -1) {
+        fprintf(stderr, "Error while parsing metadata "
+                        "from the configuration file \n");
         return -1;
     }
-
-    simulation_parameters->delta =
-            (simulation_parameters->x_max - simulation_parameters->x_min)
-                    / (double) simulation_parameters->n_bins;;
-
-    /* if the quantity of interest is discrete, bin width should be integer */
-    if ( simulation_parameters->observable == 'n') {
-        simulation_parameters->delta = ceil(simulation_parameters->delta);
-    }
-
-
+    /* make adjustment */
+    parameters->delta = (parameters->x_max - parameters->x_min)
+                        / (double) parameters->n_bins;
     /* create a directories for the output */
     mkdir("metropolis_conf", S_IRWXU | S_IRWXG | S_IRWXO);
-    sprintf(simulation_parameters->filename, /* file with trajectory */
+    sprintf(parameters->filename_trajectory, /* file with trajectory */
             "metropolis_conf/"
             "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
-            simulation_parameters->t_distribution,
-            simulation_parameters->t_parameters[0],
-            simulation_parameters->M_distribution,
-            simulation_parameters->M_parameters[0],
-            simulation_parameters->X0,
-            simulation_parameters->trajectory_length,
-            simulation_parameters->theta_is,
-            simulation_parameters->observable);
-
-    return 0;
+            parameters->t_distribution,
+            parameters->t_parameters[0],
+            parameters->M_distribution,
+            parameters->M_parameters[0],
+            parameters->X0,
+            parameters->trajectory_length,
+            parameters->theta_is,
+            parameters->observable);
+    return 1;
 }
+
 
 
 int initialize_result(const Parameters *simulation_parameters,
@@ -998,37 +994,139 @@ int initialize_result(const Parameters *simulation_parameters,
 }
 
 
-int initialize_trajectory(Trajectory trajectory,
-                            const Parameters *simulation_parameters) {
+int save_trajectory(const Trajectory trajectory, const Parameters  parameters) {
 
-    /* load the trajectory from the file or generate it from scratch */
-    FILE *fptr = fopen(simulation_parameters->filename, "r");
-    if (fptr == NULL) {
-        for (int i=0; i < simulation_parameters->trajectory_length; i++) {
-            trajectory.waiting_times[i] = generate_t(simulation_parameters);
-            trajectory.jumps[i] = generate_M(simulation_parameters);
-        }
-    } else {
-        for (int i =0; i < simulation_parameters->trajectory_length; i++) {
-            fscanf(fptr, "%lf %lf",
-                          &trajectory.jumps[i], &trajectory.waiting_times[i]);
+    FILE *fptr = fopen(parameters.filename_trajectory, "w");
+    fprintf(fptr, "%d %f \n", trajectory.n_fp, trajectory.T_fp);
+    for (int i =0; i<parameters.trajectory_length; i++) {
+        fprintf(fptr, "%f %f \n", trajectory.jumps[i], trajectory.waiting_times[i]);
+    }
+    fclose(fptr);
+    return 1;
+}
+
+int load_trajectory(Trajectory trajectory, Parameters  * parameters) {
+
+    FILE *fptr = fopen(parameters->filename_trajectory, "w");
+    if (fptr != NULL) {
+        fscanf(fptr, "%d %f", &trajectory.n_fp, &trajectory.T_fp);
+        for (int i =0; i<parameters->trajectory_length; i++) {
+            fscanf(fptr, "%f %f", &trajectory.jumps[i], &trajectory.waiting_times[i]);
         }
         fclose(fptr);
+        return 1;
     }
-    /* compute first passage properties */
-    find_first_passage(trajectory, *simulation_parameters);
+    fclose(fptr);
+    return -1;
+}
+
+
+int initialize_trajectory(Trajectory trajectory,
+                            Parameters * parameters) {
+    trajectory.waiting_times = (double *)
+        malloc( parameters->trajectory_length * sizeof(double) );
+    trajectory.jumps = (double *)
+        malloc( parameters->trajectory_length * sizeof(double) );
+    trajectory.n_fp = 0;
+    trajectory.T_fp = 0;
+
+    if (load_trajectory(trajectory, parameters) == -1) {
+        generate_trajectory_from_scratch(trajectory, parameters, false);
+    }
     return 1;
 }
 
 
 
+/*** initialize the simulation by loading the command line parameters       ***/
+int initialize_simulation(const int argc, char *argv[],
+                          Parameters *simulation_parameters,
+                          Result_data *result_data) {
 
+    if (load_parameters_from_config_file(argv[1], simulation_parameters) == -1) {
+        fprintf(stderr, "Error while parsing metadata "
+                        "from the configuration file \n");
+        return -1;
+    }
+
+    simulation_parameters->delta =
+            (simulation_parameters->x_max - simulation_parameters->x_min)
+                    / (double) simulation_parameters->n_bins;
+
+    /* if the quantity of interest is discrete, bin width should be integer */
+    if ( simulation_parameters->observable == 'n') {
+        simulation_parameters->delta = ceil(simulation_parameters->delta);
+    }
+
+
+    /* create a directories for the output */
+    mkdir("metropolis_conf", S_IRWXU | S_IRWXG | S_IRWXO);
+    sprintf(simulation_parameters->filename_trajectory, /* file with trajectory */
+            "metropolis_conf/"
+            "%s-%.2f-%s-%.2f-X0=%.3f-traj_len=%d-IS=%.4f-%c-conf",
+            simulation_parameters->t_distribution,
+            simulation_parameters->t_parameters[0],
+            simulation_parameters->M_distribution,
+            simulation_parameters->M_parameters[0],
+            simulation_parameters->X0,
+            simulation_parameters->trajectory_length,
+            simulation_parameters->theta_is,
+            simulation_parameters->observable);
+
+    return 0;
+}
+
+/******************************************************************************
+ * @brief Save simulation results and metadata to a file.
+ *
+ * This function writes simulation metadata, statistical results, and histogram
+ * data to a specified output file. The metadata includes key simulation
+ * parameters and statistics, while the histogram data includes bin centers,
+ * counts, weighted values, and average log likelihood ratios.
+ *
+ * @param [in] simulation_parameters
+ *      Pointer to a `Parameters` structure containing simulation settings.
+ * @param [in] result_data
+ *      Pointer to a `Result_data` structure containing the simulation results.
+ * @return int
+ *      - `1`: If the results are successfully saved to the file.
+ *      - `-1`: If an error occurs while opening or writing to the file.
+ *
+ * @details
+ * - **Metadata**:
+ *   - Writes key simulation parameters (`X0`, `n_steps`, `theta_is`, etc.)
+ *     and statistical results (`mean_n`, `variance_tau`, etc.) to the file as
+ *     comments (prefixed with `#`).
+ *
+ * - **Histogram**:
+ *   - For each bin, writes:
+ *     - Bin center
+ *     - `hist_counts`, number of samples in the bin.
+ *     - Accumulated probability weight separated into two parts (to avoid numerical overflow):
+ *          - `hist_weighted`, for each observation the probability weight associated with it
+ *          - `average_ln_w`, the rescaled probability if all values fall in the center of bin.
+ *       The weight of the bin is
+ *
+ *          probability of a bin = `hist_weighted` * exp( - `average_ln_w` )
+ *
+ *       where
+ *
+ *          average_ln_w = log_likelihood_ratio(bin_center, bin_center, simulation_parameters)
+ *                       + log(n_steps)
+ *                       + log(bin_width)
+ *
+ * - If importance sampling is not used,
+ *   then histogram counts (`hist_counts`) and `hist_weighted` are the same.
+ *
+ *         average_ln_w = log( bin_width * n_steps )
+ *
+ *****************************************************************************/
 int save_results(const Parameters *simulation_parameters,
                 const Result_data *result_data) {
 
     FILE *fptr = fopen(result_data->filename_data, "w");
 
-    /* metadata */
+    /* save metadata */
     fprintf(fptr,"# X0: %f \n",            simulation_parameters->X0);
     fprintf(fptr,"# n_steps: %lld \n",     simulation_parameters->n_steps);
     fprintf(fptr,"# acc: %lld \n",         result_data->acc);
@@ -1041,7 +1139,7 @@ int save_results(const Parameters *simulation_parameters,
     fprintf(fptr,"# variance_tau: %f \n",  result_data->variance_tau);
     fprintf(fptr,"# T_trust: %f \n",       result_data->T_trust);
 
-    /* histograms */
+    /* histogram */
     for(int bin_id = 0; bin_id < simulation_parameters->n_bins; bin_id++){
         const double average_ln_w =  log_likelihood_ratio(result_data->bin_centers[bin_id],
                                           result_data->bin_centers[bin_id],
@@ -1061,30 +1159,35 @@ int save_results(const Parameters *simulation_parameters,
 
 
 
+
+
+
+
+
+
+
 int main(int argc, char *argv[]) {
+
     /**************************************************************************/
-    /************************ Initialization Routine **************************/
+    /************************ Initialization part    **************************/
     /**************************************************************************/
+
+    /* TODO add a check that the input is correct */
 
     Parameters simulation_parameters;
     Result_data result_data;
     Trajectory trajectory;
 
-    if (initialize_simulation(argc, argv,
-                              &simulation_parameters) == -1){
+    if (get_parameters_of_simulation(argv, &simulation_parameters) == -1){
         fprintf(stderr, "Error while initializing simulation\n");
-                              }
+    }
+    initialize_trajectory(trajectory, &simulation_parameters);
     initialize_result(&simulation_parameters, &result_data);
 
-    /* allocate the memory for the trajectory */
-    trajectory.waiting_times = (double *)
-        malloc( simulation_parameters.trajectory_length * sizeof(double) );
-    trajectory.jumps = (double *)
-        malloc( simulation_parameters.trajectory_length * sizeof(double) );
-    trajectory.n_fp = 0;
-    trajectory.T_fp = 0;
-
-    initialize_trajectory(trajectory, &simulation_parameters);
+    /* Allocate memory for the arrays of indices and steps to be changed later in the metropolis algorithm
+     * At each step the number values to store is the same and hence it is more
+     * efficient to allocate memory in advance
+     */
 
     int changes_array_size  = simulation_parameters.n_changes;
     if (changes_array_size < 0){ changes_array_size = 1; }
@@ -1123,7 +1226,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* the main part of the Metropolis */
-        const int step_is_accepted = metropolis_step(trajectory, simulation_parameters, indices_to_change, t_old, M_old);
+        const int step_is_accepted = metropolis_step(trajectory, &simulation_parameters, indices_to_change, t_old, M_old);
         if (step_is_accepted == -1) {
             /* if there is an overshoot in the importance sampling scheme */
             result_data.overshoot ++;
@@ -1171,9 +1274,11 @@ int main(int argc, char *argv[]) {
             result_data.hist_counts[bin_id] += 1;
             /* in the weighted histogram we rescale the weight by a constant
              * to avoid numerical overflow */
-            double average_ln_w =  log_likelihood_ratio(result_data.bin_centers[bin_id],
+            double average_ln_w =  log_likelihood_ratio(
+                                        result_data.bin_centers[bin_id],
                                         result_data.bin_centers[bin_id],
                                         &simulation_parameters);
+
             double ln_w_current =  log_likelihood_ratio(trajectory.n_fp, trajectory.T_fp, &simulation_parameters);
             result_data.hist_weighted[bin_id] += exp( - ln_w_current
                                                       + average_ln_w);
@@ -1205,15 +1310,10 @@ int main(int argc, char *argv[]) {
 
     printf("output saved in: %s", result_data.filename_data);
 
-    /* save the histogram */
-    save_results(&simulation_parameters, &result_data);
 
-    /* save trajectory */
-    FILE *fptr = fopen(simulation_parameters.filename, "w");
-    for (int i =0; i<simulation_parameters.trajectory_length; i++) {
-        fprintf(fptr, "%f %f \n", trajectory.jumps[i], trajectory.waiting_times[i]);
-    }
-    fclose(fptr);
+    /* save results and trajectory */
+    save_results(&simulation_parameters, &result_data);
+    save_trajectory(trajectory, simulation_parameters);
 
     /* free all dynamically allocated memory to avoid leaks */
     free(trajectory.waiting_times);
