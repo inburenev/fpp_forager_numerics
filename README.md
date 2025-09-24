@@ -1,12 +1,17 @@
 # Repository Overview
 
-This repository contains the code used for numerical
-simulations. It has two distinct components:
+This repository contains the code for **numerical simulations of a jump process with a drift**.  
+It was used to produce the results presented in the paper
+
+I.N. Burenev, S.N. Majumdar *First-passage properties of the jump process with a drift. Two exactly solvable cases*,  
+J. Phys. A: Math. Theor. 58 (2025), 315001  [arXiv:2504.05409](https://arxiv.org/abs/2504.05409)
+
+---
+
+This repository has two main components:
 
 1. **C Program**: The primary tool for simulations.
 2. **Jupyter Notebooks**: Used for generating plots.
-
----
 
 ## FPP: First Passage Properties Simulation
 
